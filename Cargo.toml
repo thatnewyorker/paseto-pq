@@ -1,0 +1,61 @@
+[package]
+name = "paseto-pq"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Post-quantum PASETO tokens using ML-DSA (CRYSTALS-Dilithium) signatures"
+repository = "https://github.com/rustcrypto/paseto"
+homepage = "https://paseto.io"
+categories = ["cryptography", "authentication", "web-programming"]
+keywords = ["paseto", "post-quantum", "ml-dsa", "dilithium", "quantum-safe"]
+readme = "README.md"
+
+[dependencies]
+# Post-quantum cryptography (RustCrypto)
+ml-dsa = { version = "0.0.4", features = ["rand_core", "pkcs8", "zeroize"] }
+ml-kem = { version = "0.2.1", features = ["zeroize"] }
+
+# Serialization and encoding
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
+base64 = { version = "0.22.1", features = ["std"] }
+
+# Time handling (for token expiration)
+time = { version = "0.3.44", features = ["serde", "formatting", "parsing"] }
+
+# Cryptographic utilities
+rand_core = { version = "0.6", features = ["std"] }
+sha3 = "0.10"
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+
+# Error handling
+thiserror = "2.0.17"
+anyhow = "1.0"
+
+# Optional features
+tracing = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.48.0", features = ["macros", "rt", "time"] }
+rand = "0.8"
+hex = "0.4"
+proptest = "1.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[features]
+default = []
+logging = ["dep:tracing"]
+std = []
+
+# Security levels
+ml-dsa-44 = []   # Category 2 (128-bit security)
+ml-dsa-65 = []   # Category 3 (192-bit security) - recommended default
+ml-dsa-87 = []   # Category 5 (256-bit security)
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[bench]]
+name = "pq_paseto_benchmarks"
+harness = false
