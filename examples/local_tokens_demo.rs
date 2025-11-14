@@ -5,8 +5,8 @@
 //!
 //! Run with: cargo run --example local_tokens_demo
 
-use paseto_pq::{Claims, KemKeyPair, KeyPair, PqPaseto, SymmetricKey};
-use rand::thread_rng;
+use paseto_pq::{Claims, KemKeyPair, KeyPair, PasetoPQ, SymmetricKey};
+use rand::rng;
 use std::time::Instant;
 use time::{Duration, OffsetDateTime};
 
@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔐 PASETO-PQ Local Tokens Demo");
     println!("================================================\n");
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     // Generate keys for both token types
     println!("🔑 Key Generation:");
@@ -82,12 +82,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔓 Public Tokens (ML-DSA-65 Signatures):");
 
     let pub_sign_start = Instant::now();
-    let public_token = PqPaseto::sign(&asymmetric_keypair.signing_key, &claims)?;
+    let public_token = PasetoPQ::sign(&asymmetric_keypair.signing_key, &claims)?;
     let pub_sign_time = pub_sign_start.elapsed();
     println!("   Sign time:    {:?}", pub_sign_time);
 
     let pub_verify_start = Instant::now();
-    let verified_public = PqPaseto::verify(&asymmetric_keypair.verifying_key, &public_token)?;
+    let verified_public = PasetoPQ::verify(&asymmetric_keypair.verifying_key, &public_token)?;
     let pub_verify_time = pub_verify_start.elapsed();
     println!("   Verify time:  {:?}", pub_verify_time);
     println!("   Token size:   {} bytes", public_token.len());
@@ -97,12 +97,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔒 Local Tokens (ChaCha20-Poly1305 Encryption):");
 
     let loc_encrypt_start = Instant::now();
-    let local_token = PqPaseto::encrypt(&symmetric_key, &claims)?;
+    let local_token = PasetoPQ::encrypt(&symmetric_key, &claims)?;
     let loc_encrypt_time = loc_encrypt_start.elapsed();
     println!("   Encrypt time: {:?}", loc_encrypt_time);
 
     let loc_decrypt_start = Instant::now();
-    let verified_local = PqPaseto::decrypt(&symmetric_key, &local_token)?;
+    let verified_local = PasetoPQ::decrypt(&symmetric_key, &local_token)?;
     let loc_decrypt_time = loc_decrypt_start.elapsed();
     println!("   Decrypt time: {:?}", loc_decrypt_time);
     println!("   Token size:   {} bytes", local_token.len());
@@ -184,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Testing tamper detection...");
     let mut tampered_public = public_token.clone();
     tampered_public.push('x');
-    let tamper_result_pub = PqPaseto::verify(&asymmetric_keypair.verifying_key, &tampered_public);
+    let tamper_result_pub = PasetoPQ::verify(&asymmetric_keypair.verifying_key, &tampered_public);
     println!(
         "     Public token tamper detected: {}",
         tamper_result_pub.is_err()
@@ -192,7 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut tampered_local = local_token.clone();
     tampered_local.push('x');
-    let tamper_result_loc = PqPaseto::decrypt(&symmetric_key, &tampered_local);
+    let tamper_result_loc = PasetoPQ::decrypt(&symmetric_key, &tampered_local);
     println!(
         "     Local token tamper detected:  {}",
         tamper_result_loc.is_err()
@@ -200,8 +200,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test cross-token type verification
     println!("   Testing cross-type verification...");
-    let cross_pub_result = PqPaseto::decrypt(&symmetric_key, &public_token);
-    let cross_loc_result = PqPaseto::verify(&asymmetric_keypair.verifying_key, &local_token);
+    let cross_pub_result = PasetoPQ::decrypt(&symmetric_key, &public_token);
+    let cross_loc_result = PasetoPQ::verify(&asymmetric_keypair.verifying_key, &local_token);
     println!("     Public->Local fails:  {}", cross_pub_result.is_err());
     println!("     Local->Public fails:  {}", cross_loc_result.is_err());
 

@@ -10,26 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **BREAKING**: Full PASETO parity with both public and local token support
 - Local tokens using ChaCha20-Poly1305 symmetric encryption (`paseto.v1.local.*`)
+- **Footer support** for authenticated metadata in both token types
 - ML-KEM-768 key exchange support (mock implementation for demonstration)
 - SymmetricKey type for local token encryption/decryption
 - KemKeyPair type for post-quantum key exchange
+- Footer type for key identifiers, versions, and custom metadata
 - Enhanced API with encrypt/decrypt methods alongside sign/verify
-- Comprehensive test suite covering both token types
+- sign_with_footer/encrypt_with_footer methods for metadata inclusion
+- verify_with_footer/decrypt_with_footer methods for metadata extraction
+- Comprehensive test suite covering both token types and footer functionality
 - New local_tokens_demo example demonstrating full functionality
-- Updated documentation with complete PASETO feature coverage
+- New footer_demo example showcasing metadata capabilities
+- Updated documentation with complete PASETO feature coverage including footers
 
 ### Changed
-- Enhanced README with full local token documentation
-- Performance comparisons now include both public and local tokens
-- Token format documentation covers both `paseto.v1.pq.*` and `paseto.v1.local.*`
+- **BREAKING**: Renamed `PqPaseto` struct to `PasetoPQ` for better naming consistency
+- Enhanced README with full local token and footer documentation
+- Performance comparisons now include both public and local tokens with/without footers
+- Token format documentation covers all variants: `paseto.v1.pq.*`, `paseto.v1.local.*` with optional footers
+- VerifiedToken now includes optional footer data access
+- Backward compatibility maintained for tokens without footers
 
 ### Security
 - Post-quantum cryptographic signatures resistant to Shor's algorithm
 - ChaCha20-Poly1305 authenticated encryption for local tokens
+- **Footer authentication**: Public token footers covered by ML-DSA signature
+- **Footer confidentiality**: Local token footers encrypted with ChaCha20-Poly1305
 - SHA-3 based key derivation for symmetric keys
+- Tamper detection for footer modifications
 - Memory-safe Rust implementation
 - Constant-time operations where possible
 - Proper zeroization of sensitive data
+
+### Migration Guide
+- **Breaking Change**: `PqPaseto` has been renamed to `PasetoPQ`
+- **Migration**: Replace all instances of `PqPaseto::` with `PasetoPQ::` in your code
+- **Example**: `PqPaseto::sign()` becomes `PasetoPQ::sign()`
+- **Rationale**: Follows Rust naming conventions for acronyms (PascalCase)
+- **Impact**: Import statements and method calls need updating, but all functionality remains identical
 
 ## [0.1.0] - 2024-12-19
 

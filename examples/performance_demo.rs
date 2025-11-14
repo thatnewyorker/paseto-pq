@@ -5,8 +5,8 @@
 //!
 //! Run with: cargo run --example performance_demo
 
-use paseto_pq::{Claims, KeyPair, PqPaseto};
-use rand::thread_rng;
+use paseto_pq::{Claims, KeyPair, PasetoPQ};
+use rand::rng;
 use std::time::Instant;
 use time::{Duration, OffsetDateTime};
 
@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Key generation benchmark
     println!("🔑 Key Generation:");
     let keygen_start = Instant::now();
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let keypair = KeyPair::generate(&mut rng);
     let keygen_time = keygen_start.elapsed();
     println!("   ML-DSA-65 KeyGen: {:?}", keygen_time);
@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Token signing benchmark
     println!("✍️  Token Signing:");
     let sign_start = Instant::now();
-    let token = PqPaseto::sign(&keypair.signing_key, &claims)?;
+    let token = PasetoPQ::sign(&keypair.signing_key, &claims)?;
     let sign_time = sign_start.elapsed();
     println!("   ML-DSA-65 Sign: {:?}", sign_time);
     println!("   Note: Ed25519 typically takes ~20-50µs\n");
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Token verification benchmark
     println!("✅ Token Verification:");
     let verify_start = Instant::now();
-    let verified = PqPaseto::verify(&keypair.verifying_key, &token)?;
+    let verified = PasetoPQ::verify(&keypair.verifying_key, &token)?;
     let verify_time = verify_start.elapsed();
     println!("   ML-DSA-65 Verify: {:?}", verify_time);
     println!("   Note: Ed25519 typically takes ~40-80µs\n");
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         batch_claims.set_audience("api.example.com")?;
         batch_claims.set_jti(&format!("token-{}", i))?;
 
-        let batch_token = PqPaseto::sign(&keypair.signing_key, &batch_claims)?;
+        let batch_token = PasetoPQ::sign(&keypair.signing_key, &batch_claims)?;
         tokens.push(batch_token);
     }
     let batch_sign_time = batch_sign_start.elapsed();
@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Batch verification
     let batch_verify_start = Instant::now();
     for token in &tokens {
-        let _verified = PqPaseto::verify(&keypair.verifying_key, token)?;
+        let _verified = PasetoPQ::verify(&keypair.verifying_key, token)?;
     }
     let batch_verify_time = batch_verify_start.elapsed();
     println!(

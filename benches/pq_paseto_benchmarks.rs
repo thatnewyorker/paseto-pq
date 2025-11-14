@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use paseto_pq::{Claims, KeyPair, PqPaseto};
-use rand::thread_rng;
+use paseto_pq::{Claims, KeyPair, PasetoPQ};
+use rand::rng;
 use time::{Duration, OffsetDateTime};
 
 fn keypair_generation(c: &mut Criterion) {
@@ -8,7 +8,7 @@ fn keypair_generation(c: &mut Criterion) {
 
     group.bench_function("ml_dsa_65_keygen", |b| {
         b.iter(|| {
-            let mut rng = thread_rng();
+            let mut rng = rng();
             black_box(KeyPair::generate(&mut rng))
         })
     });
@@ -19,7 +19,7 @@ fn keypair_generation(c: &mut Criterion) {
 fn token_signing(c: &mut Criterion) {
     let mut group = c.benchmark_group("token_signing");
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let keypair = KeyPair::generate(&mut rng);
 
     // Create claims of varying complexity
@@ -89,11 +89,11 @@ fn token_signing(c: &mut Criterion) {
     };
 
     group.bench_function("simple_claims", |b| {
-        b.iter(|| black_box(PqPaseto::sign(&keypair.signing_key, &simple_claims).unwrap()))
+        b.iter(|| black_box(PasetoPQ::sign(&keypair.signing_key, &simple_claims).unwrap()))
     });
 
     group.bench_function("complex_claims", |b| {
-        b.iter(|| black_box(PqPaseto::sign(&keypair.signing_key, &complex_claims).unwrap()))
+        b.iter(|| black_box(PasetoPQ::sign(&keypair.signing_key, &complex_claims).unwrap()))
     });
 
     group.finish();
@@ -102,7 +102,7 @@ fn token_signing(c: &mut Criterion) {
 fn token_verification(c: &mut Criterion) {
     let mut group = c.benchmark_group("token_verification");
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let keypair = KeyPair::generate(&mut rng);
 
     // Pre-generate tokens for verification
@@ -146,21 +146,21 @@ fn token_verification(c: &mut Criterion) {
         claims
     };
 
-    let simple_token = PqPaseto::sign(&keypair.signing_key, &simple_claims).unwrap();
-    let complex_token = PqPaseto::sign(&keypair.signing_key, &complex_claims).unwrap();
+    let simple_token = PasetoPQ::sign(&keypair.signing_key, &simple_claims).unwrap();
+    let complex_token = PasetoPQ::sign(&keypair.signing_key, &complex_claims).unwrap();
 
     group.bench_function("simple_token", |b| {
-        b.iter(|| black_box(PqPaseto::verify(&keypair.verifying_key, &simple_token).unwrap()))
+        b.iter(|| black_box(PasetoPQ::verify(&keypair.verifying_key, &simple_token).unwrap()))
     });
 
     group.bench_function("complex_token", |b| {
-        b.iter(|| black_box(PqPaseto::verify(&keypair.verifying_key, &complex_token).unwrap()))
+        b.iter(|| black_box(PasetoPQ::verify(&keypair.verifying_key, &complex_token).unwrap()))
     });
 
     group.bench_function("with_audience_validation", |b| {
         b.iter(|| {
             black_box(
-                PqPaseto::verify_with_options(
+                PasetoPQ::verify_with_options(
                     &keypair.verifying_key,
                     &simple_token,
                     Some("conflux-network"),
@@ -179,7 +179,7 @@ fn token_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("token_sizes");
     group.throughput(Throughput::Bytes(1));
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let keypair = KeyPair::generate(&mut rng);
 
     // Test tokens with different payload sizes
@@ -195,14 +195,14 @@ fn token_sizes(c: &mut Criterion) {
         let large_data = "x".repeat(*size);
         claims.add_custom("large_field", &large_data).unwrap();
 
-        let token = PqPaseto::sign(&keypair.signing_key, &claims).unwrap();
+        let token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
 
         group.throughput(Throughput::Bytes(token.len() as u64));
         group.bench_with_input(
             BenchmarkId::new("verify_by_size", size),
             &token,
             |b, token| {
-                b.iter(|| black_box(PqPaseto::verify(&keypair.verifying_key, token).unwrap()))
+                b.iter(|| black_box(PasetoPQ::verify(&keypair.verifying_key, token).unwrap()))
             },
         );
     }
@@ -213,7 +213,7 @@ fn token_sizes(c: &mut Criterion) {
 fn concurrent_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_operations");
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let keypair = KeyPair::generate(&mut rng);
 
     let claims = {
@@ -225,7 +225,7 @@ fn concurrent_operations(c: &mut Criterion) {
         claims
     };
 
-    let token = PqPaseto::sign(&keypair.signing_key, &claims).unwrap();
+    let token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
 
     // Simulate concurrent signing
     group.bench_function("parallel_signing_4_threads", |b| {
@@ -241,7 +241,7 @@ fn concurrent_operations(c: &mut Criterion) {
                     let keypair = Arc::clone(&keypair);
                     let claims = Arc::clone(&claims);
 
-                    thread::spawn(move || PqPaseto::sign(&keypair.signing_key, &claims).unwrap())
+                    thread::spawn(move || PasetoPQ::sign(&keypair.signing_key, &claims).unwrap())
                 })
                 .collect();
 
@@ -265,7 +265,7 @@ fn concurrent_operations(c: &mut Criterion) {
                     let keypair = Arc::clone(&keypair);
                     let token = Arc::clone(&token);
 
-                    thread::spawn(move || PqPaseto::verify(&keypair.verifying_key, &token).unwrap())
+                    thread::spawn(move || PasetoPQ::verify(&keypair.verifying_key, &token).unwrap())
                 })
                 .collect();
 
@@ -324,14 +324,14 @@ fn memory_usage_simulation(c: &mut Criterion) {
                     claims.set_audience("api.example.com").unwrap();
                     claims.set_jti(&format!("token-{}", i)).unwrap();
 
-                    PqPaseto::sign(&keypair.signing_key, &claims).unwrap()
+                    PasetoPQ::sign(&keypair.signing_key, &claims).unwrap()
                 })
                 .collect();
 
             // Verify all tokens
             let verified: Vec<_> = tokens
                 .iter()
-                .map(|token| PqPaseto::verify(&keypair.verifying_key, token).unwrap())
+                .map(|token| PasetoPQ::verify(&keypair.verifying_key, token).unwrap())
                 .collect();
 
             black_box(verified)

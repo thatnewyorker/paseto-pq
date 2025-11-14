@@ -5,7 +5,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)](https://www.rust-lang.org)
 
-A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-Dilithium) signatures and **ChaCha20-Poly1305** encryption. This crate provides quantum-safe authentication and encryption tokens that are resistant to attacks by quantum computers implementing Shor's algorithm.
+A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-Dilithium) signatures and **ChaCha20-Poly1305** encryption. This crate provides quantum-safe authentication and encryption tokens with comprehensive footer support for metadata, resistant to attacks by quantum computers implementing Shor's algorithm.
 
 ## 🚀 Features
 
@@ -15,6 +15,7 @@ A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-D
 - **⚡ Practical Performance**: Optimized for real-world usage
 - **🔧 Easy Integration**: Drop-in replacement for authentication and encryption tokens
 - **📦 Dual Token Types**: Public (signatures) and Local (symmetric encryption)
+- **🦶 Footer Support**: Authenticated metadata for key management and service integration
 - **🔄 Key Exchange**: ML-KEM for post-quantum key establishment
 
 ## 📖 Quick Start
@@ -31,7 +32,7 @@ rand = "0.8"
 ### Public Tokens (Asymmetric Signatures)
 
 ```rust
-use paseto_pq::{PqPaseto, Claims, KeyPair};
+use paseto_pq::{PasetoPQ, Claims, KeyPair};
 use time::OffsetDateTime;
 use rand::thread_rng;
 
@@ -50,11 +51,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     claims.add_custom("roles", &["user", "admin"])?;
 
     // Sign the token (public)
-    let token = PqPaseto::sign(&keypair.signing_key, &claims)?;
+    let token = PasetoPQ::sign(&keypair.signing_key, &claims)?;
     println!("Public Token: {}", token);
 
     // Verify the token
-    let verified = PqPaseto::verify(&keypair.verifying_key, &token)?;
+    let verified = PasetoPQ::verify(&keypair.verifying_key, &token)?;
     let verified_claims = verified.claims();
     
     assert_eq!(verified_claims.subject(), Some("user123"));
@@ -67,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Local Tokens (Symmetric Encryption)
 
 ```rust
-use paseto_pq::{PqPaseto, Claims, SymmetricKey};
+use paseto_pq::{PasetoPQ, Claims, SymmetricKey};
 use time::OffsetDateTime;
 use rand::thread_rng;
 
@@ -85,11 +86,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     claims.add_custom("sensitive_data", "confidential-info")?;
 
     // Encrypt the token (local)
-    let token = PqPaseto::encrypt(&key, &claims)?;
+    let token = PasetoPQ::encrypt(&key, &claims)?;
     println!("Local Token: {}", token);
 
     // Decrypt the token
-    let verified = PqPaseto::decrypt(&key, &token)?;
+    let verified = PasetoPQ::decrypt(&key, &token)?;
     let verified_claims = verified.claims();
     
     assert_eq!(verified_claims.subject(), Some("user123"));
@@ -99,13 +100,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Footer Support
+
+PASETO-PQ supports authenticated footers for metadata that doesn't belong in claims:
+
+```rust
+use paseto_pq::{PasetoPQ, Claims, Footer, KeyPair};
+use time::OffsetDateTime;
+use rand::thread_rng;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut rng = thread_rng();
+    let keypair = KeyPair::generate(&mut rng);
+
+    // Create claims
+    let mut claims = Claims::new();
+    claims.set_subject("user123")?;
+    claims.set_issuer("my-service")?;
+
+    // Create footer with metadata
+    let mut footer = Footer::new();
+    footer.set_kid("signing-key-2024-01")?;  // Key identifier for rotation
+    footer.set_version("v2.1.0")?;           // Service version
+    footer.add_custom("trace_id", "trace-abc-123")?;     // Distributed tracing
+    footer.add_custom("deployment", "us-east-1")?;       // Infrastructure info
+
+    // Sign with footer
+    let token = PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer))?;
+
+    // Verify and access footer
+    let verified = PasetoPQ::verify_with_footer(&keypair.verifying_key, &token)?;
+    let verified_footer = verified.footer().unwrap();
+    
+    println!("Key ID: {}", verified_footer.kid().unwrap());
+    println!("Trace ID: {}", verified_footer.get_custom("trace_id").unwrap().as_str().unwrap());
+
+    Ok(())
+}
+```
+
 ## 🔐 Token Formats
 
-PASETO-PQ supports both token types with structured formats:
+PASETO-PQ supports both token types with structured formats and optional footers:
 
 ### Public Tokens (Signatures)
 ```
+# Without footer (5 parts)
 paseto.v1.pq.<base64url-payload>.<base64url-signature>
+
+# With footer (6 parts)
+paseto.v1.pq.<base64url-payload>.<base64url-signature>.<base64url-footer>
 ```
 
 - **`paseto`**: Protocol identifier
@@ -113,16 +157,22 @@ paseto.v1.pq.<base64url-payload>.<base64url-signature>
 - **`pq`**: Purpose (post-quantum signatures)
 - **`payload`**: Base64url-encoded JSON claims
 - **`signature`**: Base64url-encoded ML-DSA-65 signature (~2.4KB)
+- **`footer`**: Base64url-encoded JSON metadata (optional)
 
 ### Local Tokens (Encryption)
 ```
+# Without footer (4 parts)
 paseto.v1.local.<base64url-encrypted-payload>
+
+# With footer (5 parts)
+paseto.v1.local.<base64url-encrypted-payload>.<base64url-footer>
 ```
 
 - **`paseto`**: Protocol identifier
 - **`v1`**: Version (post-quantum era)
 - **`local`**: Purpose (symmetric encryption)
 - **`encrypted-payload`**: Base64url-encoded nonce + ChaCha20-Poly1305 ciphertext
+- **`footer`**: Base64url-encoded JSON metadata (optional, encrypted with payload)
 
 ## 📊 Performance Characteristics
 
@@ -195,10 +245,10 @@ paseto.v1.local.<base64url-encrypted-payload>
 ### Public Token Validation
 
 ```rust
-use paseto_pq::{PqPaseto, Claims, KeyPair};
+use paseto_pq::{PasetoPQ, Claims, KeyPair};
 use time::Duration;
 
-let verified = PqPaseto::verify_with_options(
+let verified = PasetoPQ::verify_with_options(
     &verifying_key,
     &token,
     Some("expected-audience"),     // Validate audience
@@ -207,13 +257,39 @@ let verified = PqPaseto::verify_with_options(
 )?;
 ```
 
+### Footer Operations
+
+```rust
+use paseto_pq::{Footer, PasetoPQ};
+
+// Create and populate footer
+let mut footer = Footer::new();
+footer.set_kid("key-2024-01")?;
+footer.set_version("v1.0.0")?;
+footer.add_custom("trace_id", "abc-123")?;
+
+// Use with public tokens
+let token = PasetoPQ::sign_with_footer(&signing_key, &claims, Some(&footer))?;
+let verified = PasetoPQ::verify_with_footer(&verifying_key, &token)?;
+
+// Access footer data
+if let Some(footer_data) = verified.footer() {
+    println!("Key ID: {}", footer_data.kid().unwrap_or("none"));
+    println!("Trace: {}", footer_data.get_custom("trace_id").unwrap().as_str().unwrap());
+}
+
+// Use with local tokens (footer is encrypted)
+let local_token = PasetoPQ::encrypt_with_footer(&symmetric_key, &claims, Some(&footer))?;
+let decrypted = PasetoPQ::decrypt_with_footer(&symmetric_key, &local_token)?;
+```
+
 ### Local Token Validation
 
 ```rust
-use paseto_pq::{PqPaseto, SymmetricKey};
+use paseto_pq::{PasetoPQ, SymmetricKey};
 use time::Duration;
 
-let verified = PqPaseto::decrypt_with_options(
+let verified = PasetoPQ::decrypt_with_options(
     &symmetric_key,
     &token,
     Some("expected-audience"),     // Validate audience
@@ -245,7 +321,7 @@ let dec_key = KemKeyPair::decapsulation_key_from_bytes(&dec_bytes)?;
 ### Post-Quantum Key Exchange
 
 ```rust
-use paseto_pq::{KemKeyPair, SymmetricKey, PqPaseto};
+use paseto_pq::{KemKeyPair, SymmetricKey, PasetoPQ};
 use rand::thread_rng;
 
 // Generate KEM keypair
@@ -262,8 +338,8 @@ let shared_key_receiver = kem_keypair.decapsulate(&ciphertext)?;
 assert_eq!(shared_key_sender.to_bytes(), shared_key_receiver.to_bytes());
 
 // Use for local tokens
-let token = PqPaseto::encrypt(&shared_key_sender, &claims)?;
-let verified = PqPaseto::decrypt(&shared_key_receiver, &token)?;
+let token = PasetoPQ::encrypt(&shared_key_sender, &claims)?;
+let verified = PasetoPQ::decrypt(&shared_key_receiver, &token)?;
 ```
 
 ### Custom Claims
@@ -281,8 +357,8 @@ claims.add_custom("metadata", &serde_json::json!({
 }))?;
 
 // Works with both public and local tokens
-let public_token = PqPaseto::sign(&keypair.signing_key, &claims)?;
-let local_token = PqPaseto::encrypt(&symmetric_key, &claims)?;
+let public_token = PasetoPQ::sign(&keypair.signing_key, &claims)?;
+let local_token = PasetoPQ::encrypt(&symmetric_key, &claims)?;
 
 // Access custom claims after verification/decryption
 if let Some(tenant) = verified_claims.get_custom("tenant_id") {
@@ -320,7 +396,7 @@ If you're migrating from traditional PASETO:
 // let token = sign_v4_public(&key, &claims)?;
 
 // New PASETO-PQ (ML-DSA-65)
-let token = PqPaseto::sign(&keypair.signing_key, &claims)?;
+let token = PasetoPQ::sign(&keypair.signing_key, &claims)?;
 ```
 
 ### Local Tokens
@@ -329,7 +405,7 @@ let token = PqPaseto::sign(&keypair.signing_key, &claims)?;
 // let token = encrypt_v4_local(&key, &claims)?;
 
 // New PASETO-PQ (ChaCha20-Poly1305)
-let token = PqPaseto::encrypt(&symmetric_key, &claims)?;
+let token = PasetoPQ::encrypt(&symmetric_key, &claims)?;
 ```
 
 **Key differences**:
@@ -381,6 +457,7 @@ Performance demos:
 ```bash
 cargo run --example performance_demo    # Public tokens
 cargo run --example local_tokens_demo   # Local tokens + key exchange
+cargo run --example footer_demo         # Footer functionality showcase
 ```
 
 ## 🛣️ Roadmap
@@ -388,6 +465,7 @@ cargo run --example local_tokens_demo   # Local tokens + key exchange
 - [x] **v0.1**: Basic ML-DSA-65 public tokens
 - [x] **v0.1.1**: Local tokens with ChaCha20-Poly1305
 - [x] **v0.1.2**: ML-KEM-768 key exchange
+- [x] **v0.1.3**: Complete footer support for metadata
 - [ ] **v0.2**: PASETO v5 compatibility
 - [ ] **v0.3**: Additional ML-DSA parameter sets (44, 87)
 - [ ] **v0.4**: Hybrid classical+PQ modes  
@@ -425,6 +503,12 @@ This crate has **not yet undergone an independent security audit**. While we fol
 - **ChaCha20-Poly1305**: IETF RFC 8439 authenticated encryption
 - **SHA-3**: NIST FIPS 202 cryptographic hash function
 
+### Footer Security Properties
+- **Public tokens**: Footers are visible but authenticated by signature
+- **Local tokens**: Footers are encrypted and authenticated with payload
+- **Tamper detection**: Any footer modification breaks verification
+- **Backward compatibility**: Tokens without footers remain valid
+
 **USE AT YOUR OWN RISK**
 
 ## 🙏 Acknowledgments
@@ -444,4 +528,4 @@ This crate has **not yet undergone an independent security audit**. While we fol
 ---
 
 **Made with ❤️ for a quantum-safe future**  
-**🎉 Now with full PASETO parity: Public AND Local tokens!**
+**🎉 Now with full PASETO parity: Public AND Local tokens with Footer support!**
