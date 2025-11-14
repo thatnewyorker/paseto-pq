@@ -8,18 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial implementation of PASETO-PQ tokens using ML-DSA-65 signatures
-- Support for standard PASETO claims (iss, sub, aud, exp, nbf, iat, jti, kid)
-- Custom claims support with JSON serialization
-- Time-based token validation with configurable clock skew tolerance
-- Audience and issuer validation
-- Key serialization to/from bytes
-- Comprehensive test suite
-- Performance benchmarks
-- Documentation and examples
+- **BREAKING**: Full PASETO parity with both public and local token support
+- Local tokens using ChaCha20-Poly1305 symmetric encryption (`paseto.v1.local.*`)
+- ML-KEM-768 key exchange support (mock implementation for demonstration)
+- SymmetricKey type for local token encryption/decryption
+- KemKeyPair type for post-quantum key exchange
+- Enhanced API with encrypt/decrypt methods alongside sign/verify
+- Comprehensive test suite covering both token types
+- New local_tokens_demo example demonstrating full functionality
+- Updated documentation with complete PASETO feature coverage
+
+### Changed
+- Enhanced README with full local token documentation
+- Performance comparisons now include both public and local tokens
+- Token format documentation covers both `paseto.v1.pq.*` and `paseto.v1.local.*`
 
 ### Security
 - Post-quantum cryptographic signatures resistant to Shor's algorithm
+- ChaCha20-Poly1305 authenticated encryption for local tokens
+- SHA-3 based key derivation for symmetric keys
 - Memory-safe Rust implementation
 - Constant-time operations where possible
 - Proper zeroization of sensitive data
