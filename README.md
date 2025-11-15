@@ -7,9 +7,42 @@
 
 A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-Dilithium) signatures and **ChaCha20-Poly1305** encryption. This crate provides quantum-safe authentication and encryption tokens with comprehensive metadata support, resistant to attacks by quantum computers implementing Shor's algorithm.
 
+## 🛡️ Security Level Selection
+
+**Default: ml-dsa-44** - Optimized for distributed systems and network protocols
+- 128-bit post-quantum security (equivalent to AES-128)
+- ~30% smaller tokens than ml-dsa-65
+- Best for: networking protocols, authentication tokens, distributed systems
+
+**Upgrade to ml-dsa-65** for high-value or long-term secrets
+- 192-bit post-quantum security 
+- Larger tokens but stronger security margin
+- Best for: financial systems, sensitive data, compliance requirements
+
+**Upgrade to ml-dsa-87** for critical infrastructure
+- 256-bit post-quantum security
+- Largest tokens but maximum security
+- Best for: government, military, long-term archival signatures
+
+### Usage
+
+```toml
+# Default (recommended for most applications)
+paseto-pq = "0.1.0"
+
+# High security applications  
+paseto-pq = { version = "0.1.0", features = ["balanced"] }
+
+# Maximum security applications
+paseto-pq = { version = "0.1.0", features = ["maximum-security"] }
+
+# Explicit parameter set selection
+paseto-pq = { version = "0.1.0", features = ["ml-dsa-65"], default-features = false }
+```
+
 ## 🚀 Features
 
-- **🔒 Quantum-Safe**: Uses ML-DSA-65 (NIST FIPS 204) signatures and ML-KEM-768 key exchange
+- **🔒 Quantum-Safe**: Uses ML-DSA (NIST FIPS 204) signatures and ML-KEM-768 key exchange
 - **🦀 Pure Rust**: No C dependencies, built on RustCrypto
 - **🎯 Full PASETO Parity**: Complete implementation with both public and local tokens
 - **⚡ Practical Performance**: Optimized for real-world usage patterns
@@ -29,7 +62,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-paseto-pq = "0.1.0"
+paseto-pq = "0.1.0"  # Uses ml-dsa-44 by default for optimal network performance
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 rand = "0.10.0-rc.1"
 ```
@@ -175,7 +208,7 @@ paseto.pq1.public.<base64url-payload>.<base64url-signature>.<base64url-footer>
 - **`pq1`**: Post-quantum version identifier (non-standard, distinct from official PASETO)
 - **`public`**: Purpose (signature-based tokens)
 - **`payload`**: Base64url-encoded JSON claims
-- **`signature`**: Base64url-encoded ML-DSA-65 signature (~2.4KB)
+- **`signature`**: Base64url-encoded ML-DSA signature (size varies by parameter set)
 - **`footer`**: Base64url-encoded JSON metadata (optional, authenticated)
 
 ### Local Tokens (Encryption)
@@ -194,16 +227,23 @@ paseto.pq1.local.<base64url-encrypted-payload>.<base64url-footer>
 - **`footer`**: Base64url-encoded JSON metadata (optional, encrypted with payload)
 
 ## 📊 Performance Characteristics
+## 🔧 Performance & Size Comparison
 
-### Public Tokens (ML-DSA-65)
-| Operation | ML-DSA-65 | Ed25519 (reference) | Ratio |
-|-----------|-----------|-------------------|-------|
+| Parameter Set | Security Level | Signature Size | Public Key Size | Token Size (approx.) |
+|---------------|----------------|----------------|-----------------|---------------------|
+| **ml-dsa-44** | 128-bit (default) | ~2,420 bytes | ~1,312 bytes | **~3.2-3.4KB** |
+| **ml-dsa-65** | 192-bit | ~3,309 bytes | ~1,952 bytes | **~4.3-4.5KB** |
+| **ml-dsa-87** | 256-bit | ~4,627 bytes | ~2,592 bytes | **~6.0-6.2KB** |
+
+**Comparison to Classical Algorithms:**
+
+| Operation | ML-DSA (avg) | Ed25519 (reference) | Ratio |
+|-----------|--------------|-------------------|-------|
 | Key Generation | ~10-30ms | ~100µs | 100-300x slower |
 | Signing | ~5-20ms | ~50µs | 100-400x slower |
 | Verification | ~2-5ms | ~80µs | 25-60x slower |
-| Signature Size | 2,420 bytes | 64 bytes | 38x larger |
-| Public Key | 1,952 bytes | 32 bytes | 61x larger |
-| **Token Size** | **~4.3-4.5KB** | **~300-500 bytes** | **~10x larger** |
+| Signature Size | 2,420-4,627 bytes | 64 bytes | 38-72x larger |
+| Public Key | 1,312-2,592 bytes | 32 bytes | 41-81x larger |
 
 ### Local Tokens (ChaCha20-Poly1305)
 | Operation | PASETO-PQ Local | Traditional PASETO v4.local | Ratio |

@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let start_time = Instant::now();
     let public_token = PasetoPQ::sign_with_footer(
-        &asymmetric_keypair.signing_key,
+        asymmetric_keypair.signing_key(),
         &claims,
         Some(&basic_footer),
     )?;
@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let start_time = Instant::now();
     let verified_public =
-        PasetoPQ::verify_with_footer(&asymmetric_keypair.verifying_key, &public_token)?;
+        PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &public_token)?;
     let verify_time = start_time.elapsed();
 
     println!("   Token format: {}", &public_token[..50]);
@@ -148,12 +148,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rotation_footer.add_custom("description", description)?;
 
         let token = PasetoPQ::sign_with_footer(
-            &asymmetric_keypair.signing_key,
+            asymmetric_keypair.signing_key(),
             &claims,
             Some(&rotation_footer),
         )?;
 
-        let verified = PasetoPQ::verify_with_footer(&asymmetric_keypair.verifying_key, &token)?;
+        let verified = PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &token)?;
         let footer = verified.footer().unwrap();
 
         println!(
@@ -176,13 +176,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     service_footer.add_custom("request_id", "req-def-456")?;
 
     let service_token = PasetoPQ::sign_with_footer(
-        &asymmetric_keypair.signing_key,
+        asymmetric_keypair.signing_key(),
         &claims,
         Some(&service_footer),
     )?;
 
     let verified_service =
-        PasetoPQ::verify_with_footer(&asymmetric_keypair.verifying_key, &service_token)?;
+        PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &service_token)?;
     let service_footer_data = verified_service.footer().unwrap();
 
     println!("   Distributed tracing metadata:");
@@ -215,12 +215,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📊 Performance Impact Analysis:");
 
     // Tokens without footer
-    let token_no_footer = PasetoPQ::sign(&asymmetric_keypair.signing_key, &claims)?;
+    let token_no_footer = PasetoPQ::sign(asymmetric_keypair.signing_key(), &claims)?;
     let local_no_footer = PasetoPQ::encrypt(&symmetric_key, &claims)?;
 
     // Tokens with footer
     let token_with_footer = PasetoPQ::sign_with_footer(
-        &asymmetric_keypair.signing_key,
+        asymmetric_keypair.signing_key(),
         &claims,
         Some(&basic_footer),
     )?;
@@ -255,7 +255,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tampered_token.push('x'); // Tamper with footer
 
     let tamper_result =
-        PasetoPQ::verify_with_footer(&asymmetric_keypair.verifying_key, &tampered_token);
+        PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &tampered_token);
     println!(
         "   Footer tamper detection: {}",
         if tamper_result.is_err() {
@@ -354,11 +354,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n↔️  Backward Compatibility:");
 
     // Old tokens (without footer) should work with new verification methods
-    let old_public = PasetoPQ::sign(&asymmetric_keypair.signing_key, &claims)?;
+    let old_public = PasetoPQ::sign(asymmetric_keypair.signing_key(), &claims)?;
     let old_local = PasetoPQ::encrypt(&symmetric_key, &claims)?;
 
     let verified_old_public =
-        PasetoPQ::verify_with_footer(&asymmetric_keypair.verifying_key, &old_public)?;
+        PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &old_public)?;
     let verified_old_local = PasetoPQ::decrypt_with_footer(&symmetric_key, &old_local)?;
 
     println!("   Legacy token compatibility:");
@@ -380,7 +380,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // New tokens with footer should work with standard methods
-    let _new_public_verified = PasetoPQ::verify(&asymmetric_keypair.verifying_key, &old_public)?;
+    let _new_public_verified = PasetoPQ::verify(asymmetric_keypair.verifying_key(), &old_public)?;
     let _new_local_verified = PasetoPQ::decrypt(&symmetric_key, &old_local)?;
 
     println!("     Standard API compatibility: ✓ PASS");
@@ -438,8 +438,8 @@ mod tests {
         footer.set_kid("test-key")?;
         footer.add_custom("test_field", "test_value")?;
 
-        let token = PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer))?;
-        let verified = PasetoPQ::verify_with_footer(&keypair.verifying_key, &token)?;
+        let token = PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer))?;
+        let verified = PasetoPQ::verify_with_footer(keypair.verifying_key(), &token)?;
 
         assert_eq!(verified.claims().subject(), Some("test-user"));
         assert_eq!(verified.footer().unwrap().kid(), Some("test-key"));
@@ -465,29 +465,29 @@ mod tests {
         claims.set_subject("test-user")?;
 
         // Token without footer
-        let token_no_footer = PasetoPQ::sign(&keypair.signing_key, &claims)?;
+        let token_no_footer = PasetoPQ::sign(keypair.signing_key(), &claims)?;
 
         // Token with small footer
         let mut small_footer = Footer::new();
         small_footer.set_kid("key-1")?;
         let token_small_footer =
-            PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&small_footer))?;
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&small_footer))?;
 
         // Token with large footer
         let mut large_footer = Footer::new();
         large_footer.set_kid("very-long-key-identifier-with-lots-of-metadata")?;
         large_footer.add_custom("large_data", &"x".repeat(500))?;
         let token_large_footer =
-            PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&large_footer))?;
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&large_footer))?;
 
         // Verify size relationships
         assert!(token_small_footer.len() > token_no_footer.len());
         assert!(token_large_footer.len() > token_small_footer.len());
 
         // All tokens should verify correctly
-        PasetoPQ::verify(&keypair.verifying_key, &token_no_footer)?;
-        PasetoPQ::verify_with_footer(&keypair.verifying_key, &token_small_footer)?;
-        PasetoPQ::verify_with_footer(&keypair.verifying_key, &token_large_footer)?;
+        PasetoPQ::verify(keypair.verifying_key(), &token_no_footer)?;
+        PasetoPQ::verify_with_footer(keypair.verifying_key(), &token_small_footer)?;
+        PasetoPQ::verify_with_footer(keypair.verifying_key(), &token_large_footer)?;
 
         Ok(())
     }

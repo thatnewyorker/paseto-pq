@@ -73,12 +73,12 @@ fn create_sample_tokens(
     footer.add_custom("trace_id", "trace_abc123def456")?;
 
     // 1. Public token without footer
-    let public_token = PasetoPQ::sign(&keypair.signing_key, &claims)?;
+    let public_token = PasetoPQ::sign(keypair.signing_key(), &claims)?;
     tokens.insert("public_simple".to_string(), public_token);
 
     // 2. Public token with footer
     let public_token_footer =
-        PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer))?;
+        PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer))?;
     tokens.insert("public_with_footer".to_string(), public_token_footer);
 
     // 3. Local token without footer
@@ -96,7 +96,7 @@ fn create_sample_tokens(
         "permissions",
         &(0..50).map(|i| format!("perm_{}", i)).collect::<Vec<_>>(),
     )?;
-    let large_token = PasetoPQ::sign(&keypair.signing_key, &large_claims)?;
+    let large_token = PasetoPQ::sign(keypair.signing_key(), &large_claims)?;
     tokens.insert("large_token".to_string(), large_token);
 
     Ok(tokens)

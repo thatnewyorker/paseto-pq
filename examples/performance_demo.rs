@@ -17,10 +17,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Key generation benchmark
     println!("🔑 Key Generation:");
     let keygen_start = Instant::now();
-    let mut rng = rng();
     let keypair = KeyPair::generate(&mut rng);
     let keygen_time = keygen_start.elapsed();
-    println!("   ML-DSA-65 KeyGen: {:?}", keygen_time);
+    println!("   ML-DSA KeyGen: {:?}", keygen_time);
     println!("   Note: Ed25519 typically takes ~50-100µs\n");
 
     // Key size information
@@ -45,9 +44,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Token signing benchmark
     println!("✍️  Token Signing:");
     let sign_start = Instant::now();
-    let token = PasetoPQ::sign(&keypair.signing_key, &claims)?;
+    let token = PasetoPQ::sign(keypair.signing_key(), &claims)?;
     let sign_time = sign_start.elapsed();
-    println!("   ML-DSA-65 Sign: {:?}", sign_time);
+    println!("   ML-DSA Sign: {:?}", sign_time);
     println!("   Note: Ed25519 typically takes ~20-50µs\n");
 
     // Token size information
@@ -58,9 +57,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Token verification benchmark
     println!("✅ Token Verification:");
     let verify_start = Instant::now();
-    let verified = PasetoPQ::verify(&keypair.verifying_key, &token)?;
+    let verified = PasetoPQ::verify(keypair.verifying_key(), &token)?;
     let verify_time = verify_start.elapsed();
-    println!("   ML-DSA-65 Verify: {:?}", verify_time);
+    println!("   ML-DSA Verify: {:?}", verify_time);
     println!("   Note: Ed25519 typically takes ~40-80µs\n");
 
     // Batch operations to show sustained performance
@@ -76,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         batch_claims.set_audience("api.example.com")?;
         batch_claims.set_jti(&format!("token-{}", i))?;
 
-        let batch_token = PasetoPQ::sign(&keypair.signing_key, &batch_claims)?;
+        let batch_token = PasetoPQ::sign(keypair.signing_key(), &batch_claims)?;
         tokens.push(batch_token);
     }
     let batch_sign_time = batch_sign_start.elapsed();
@@ -89,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Batch verification
     let batch_verify_start = Instant::now();
     for token in &tokens {
-        let _verified = PasetoPQ::verify(&keypair.verifying_key, token)?;
+        let _verified = PasetoPQ::verify(keypair.verifying_key(), token)?;
     }
     let batch_verify_time = batch_verify_start.elapsed();
     println!(
@@ -122,10 +121,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   Roles:    {:?}", roles);
     }
 
-    println!("\n🎯 Performance Summary:");
-    println!("   • ML-DSA-65 provides quantum-safe signatures");
+    println!("🎯 Performance Summary:");
+    println!("   • ML-DSA provides quantum-safe signatures");
     println!("   • ~10-100x slower than Ed25519 (expected for PQ crypto)");
-    println!("   • ~40x larger signatures (2.4KB vs 64 bytes)");
+    println!(
+        "   • Signature size depends on parameter set (ml-dsa-44: ~2.4KB, ml-dsa-65: ~3.3KB, ml-dsa-87: ~4.6KB)"
+    );
     println!("   • Still practical for authentication tokens");
     println!("   • Future-proof against quantum computers");
 

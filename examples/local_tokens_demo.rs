@@ -82,12 +82,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔓 Public Tokens (ML-DSA-65 Signatures):");
 
     let pub_sign_start = Instant::now();
-    let public_token = PasetoPQ::sign(&asymmetric_keypair.signing_key, &claims)?;
+    let public_token = PasetoPQ::sign(asymmetric_keypair.signing_key(), &claims)?;
     let pub_sign_time = pub_sign_start.elapsed();
     println!("   Sign time:    {:?}", pub_sign_time);
 
     let pub_verify_start = Instant::now();
-    let verified_public = PasetoPQ::verify(&asymmetric_keypair.verifying_key, &public_token)?;
+    let verified_public = PasetoPQ::verify(asymmetric_keypair.verifying_key(), &public_token)?;
     let pub_verify_time = pub_verify_start.elapsed();
     println!("   Verify time:  {:?}", pub_verify_time);
     println!("   Token size:   {} bytes", public_token.len());
@@ -184,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Testing tamper detection...");
     let mut tampered_public = public_token.clone();
     tampered_public.push('x');
-    let tamper_result_pub = PasetoPQ::verify(&asymmetric_keypair.verifying_key, &tampered_public);
+    let tamper_result_pub = PasetoPQ::verify(asymmetric_keypair.verifying_key(), &tampered_public);
     println!(
         "     Public token tamper detected: {}",
         tamper_result_pub.is_err()
@@ -201,7 +201,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test cross-token type verification
     println!("   Testing cross-type verification...");
     let cross_pub_result = PasetoPQ::decrypt(&symmetric_key, &public_token);
-    let cross_loc_result = PasetoPQ::verify(&asymmetric_keypair.verifying_key, &local_token);
+    let cross_loc_result = PasetoPQ::verify(asymmetric_keypair.verifying_key(), &local_token);
     println!("     Public->Local fails:  {}", cross_pub_result.is_err());
     println!("     Local->Public fails:  {}", cross_loc_result.is_err());
 

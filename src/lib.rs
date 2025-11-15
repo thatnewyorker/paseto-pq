@@ -58,10 +58,10 @@
 //! claims.add_custom("roles", &["user", "admin"])?;
 //!
 //! // Sign the token
-//! let token = PasetoPQ::sign(&keypair.signing_key, &claims)?;
+//! let token = PasetoPQ::sign(keypair.signing_key(), &claims)?;
 //!
 //! // Verify the token
-//! let verified = PasetoPQ::verify(&keypair.verifying_key, &token)?;
+//! let verified = PasetoPQ::verify(keypair.verifying_key(), &token)?;
 //! let verified_claims = verified.claims();
 //! assert_eq!(verified_claims.subject(), Some("user123"));
 //! # Ok(())
@@ -74,8 +74,42 @@ use std::fmt;
 use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+// Conditional compilation for ML-DSA parameter set selection
+#[cfg(all(
+    feature = "ml-dsa-44",
+    not(any(feature = "ml-dsa-65", feature = "ml-dsa-87"))
+))]
+use ml_dsa::MlDsa44 as MlDsaParam;
+
+#[cfg(all(
+    feature = "ml-dsa-65",
+    not(any(feature = "ml-dsa-44", feature = "ml-dsa-87"))
+))]
+use ml_dsa::MlDsa65 as MlDsaParam;
+
+#[cfg(all(
+    feature = "ml-dsa-87",
+    not(any(feature = "ml-dsa-44", feature = "ml-dsa-65"))
+))]
+use ml_dsa::MlDsa87 as MlDsaParam;
+
+// Compilation guards to ensure exactly one parameter set is selected
+#[cfg(not(any(feature = "ml-dsa-44", feature = "ml-dsa-65", feature = "ml-dsa-87")))]
+compile_error!(
+    "Please enable exactly one of the features: `ml-dsa-44`, `ml-dsa-65`, or `ml-dsa-87`."
+);
+
+#[cfg(all(
+    feature = "ml-dsa-44",
+    any(feature = "ml-dsa-65", feature = "ml-dsa-87")
+))]
+compile_error!("Only one of `ml-dsa-44`, `ml-dsa-65`, or `ml-dsa-87` may be enabled.");
+
+#[cfg(all(feature = "ml-dsa-65", feature = "ml-dsa-87"))]
+compile_error!("Only one of `ml-dsa-44`, `ml-dsa-65`, or `ml-dsa-87` may be enabled.");
+
 use ml_dsa::{
-    KeyGen, MlDsa65,
+    KeyGen,
     signature::{SignatureEncoding, Signer, Verifier},
 };
 // ML-KEM imports for real implementation
@@ -107,17 +141,17 @@ pub struct PasetoPQ;
 /// A post-quantum key pair for signing and verification
 #[derive(Clone)]
 pub struct KeyPair {
-    pub signing_key: SigningKey,
-    pub verifying_key: VerifyingKey,
+    signing_key: SigningKey,
+    verifying_key: VerifyingKey,
 }
 
 /// A signing key for creating tokens
 #[derive(Clone)]
-pub struct SigningKey(ml_dsa::SigningKey<MlDsa65>);
+pub struct SigningKey(ml_dsa::SigningKey<MlDsaParam>);
 
 /// A verifying key for validating tokens
 #[derive(Clone)]
-pub struct VerifyingKey(ml_dsa::VerifyingKey<MlDsa65>);
+pub struct VerifyingKey(ml_dsa::VerifyingKey<MlDsaParam>);
 
 /// A symmetric key for local token encryption/decryption
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
@@ -453,15 +487,25 @@ impl KeyPair {
     /// Generate a new post-quantum key pair
     #[cfg_attr(feature = "logging", instrument(skip(rng)))]
     pub fn generate<R: CryptoRng + RngCore>(rng: &mut R) -> Self {
-        let keypair = MlDsa65::key_gen(rng);
+        let keypair = MlDsaParam::key_gen(rng);
 
         #[cfg(feature = "logging")]
-        debug!("Generated new ML-DSA-65 key pair");
+        debug!("Generated new ML-DSA key pair");
 
         Self {
             signing_key: SigningKey(keypair.signing_key().clone()),
             verifying_key: VerifyingKey(keypair.verifying_key().clone()),
         }
+    }
+
+    /// Get a reference to the signing key
+    pub fn signing_key(&self) -> &SigningKey {
+        &self.signing_key
+    }
+
+    /// Get a reference to the verifying key
+    pub fn verifying_key(&self) -> &VerifyingKey {
+        &self.verifying_key
     }
 
     /// Export the signing key as bytes
@@ -472,9 +516,9 @@ impl KeyPair {
 
     /// Import signing key from bytes
     pub fn signing_key_from_bytes(bytes: &[u8]) -> Result<SigningKey, PqPasetoError> {
-        let encoded = ml_dsa::EncodedSigningKey::<MlDsa65>::try_from(bytes)
+        let encoded = ml_dsa::EncodedSigningKey::<MlDsaParam>::try_from(bytes)
             .map_err(|e| PqPasetoError::CryptoError(format!("Invalid key bytes: {:?}", e)))?;
-        let key = ml_dsa::SigningKey::<MlDsa65>::decode(&encoded);
+        let key = ml_dsa::SigningKey::<MlDsaParam>::decode(&encoded);
         Ok(SigningKey(key))
     }
 
@@ -486,9 +530,9 @@ impl KeyPair {
 
     /// Import verifying key from bytes
     pub fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey, PqPasetoError> {
-        let encoded = ml_dsa::EncodedVerifyingKey::<MlDsa65>::try_from(bytes)
+        let encoded = ml_dsa::EncodedVerifyingKey::<MlDsaParam>::try_from(bytes)
             .map_err(|e| PqPasetoError::CryptoError(format!("Invalid key bytes: {:?}", e)))?;
-        let key = ml_dsa::VerifyingKey::<MlDsa65>::decode(&encoded);
+        let key = ml_dsa::VerifyingKey::<MlDsaParam>::decode(&encoded);
         Ok(VerifyingKey(key))
     }
 }
@@ -917,7 +961,14 @@ impl TokenSizeEstimator {
 
         // Constants for public tokens
         let prefix_len = TOKEN_PREFIX_PUBLIC.len() + 1; // +1 for trailing dot
-        let signature_len = 4300; // ML-DSA-65 signature is ~2,420 bytes -> ~3,227 base64 -> actual ~4.3KB
+        // Signature size varies by parameter set
+        let signature_len = if cfg!(feature = "ml-dsa-44") {
+            2800 // ML-DSA-44 signature is smaller
+        } else if cfg!(feature = "ml-dsa-65") {
+            4300 // ML-DSA-65 signature is ~2,420 bytes -> ~3,227 base64 -> actual ~4.3KB
+        } else {
+            5000 // ML-DSA-87 signature is largest
+        };
         let footer_len = if has_footer { 150 } else { 0 }; // Estimated footer size
         let separators = if has_footer { 3 } else { 2 }; // Dots between parts
         let base64_overhead = (claims_bytes * 4 + 2) / 3 - claims_bytes; // More accurate base64 overhead
@@ -1715,9 +1766,11 @@ impl PasetoPQ {
         })?;
 
         // Reconstruct signature
-        let encoded_sig = ml_dsa::EncodedSignature::<MlDsa65>::try_from(signature_bytes.as_slice())
-            .map_err(|e| PqPasetoError::CryptoError(format!("Invalid signature bytes: {:?}", e)))?;
-        let signature = ml_dsa::Signature::<MlDsa65>::decode(&encoded_sig)
+        let encoded_sig = ml_dsa::EncodedSignature::<MlDsaParam>::try_from(
+            signature_bytes.as_slice(),
+        )
+        .map_err(|e| PqPasetoError::CryptoError(format!("Invalid signature bytes: {:?}", e)))?;
+        let signature = ml_dsa::Signature::<MlDsaParam>::decode(&encoded_sig)
             .ok_or_else(|| PqPasetoError::CryptoError("Failed to decode signature".into()))?;
 
         // Verify signature
@@ -1930,13 +1983,13 @@ mod tests {
         let mut claims = Claims::new();
         claims.set_subject("test").unwrap();
 
-        let token1 = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let token1 = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
         let token2 = PasetoPQ::sign(&imported_signing, &claims).unwrap();
 
         // Both should verify with either key
-        PasetoPQ::verify(&keypair.verifying_key, &token1).unwrap();
+        PasetoPQ::verify(keypair.verifying_key(), &token1).unwrap();
         PasetoPQ::verify(&imported_verifying, &token1).unwrap();
-        PasetoPQ::verify(&keypair.verifying_key, &token2).unwrap();
+        PasetoPQ::verify(keypair.verifying_key(), &token2).unwrap();
         PasetoPQ::verify(&imported_verifying, &token2).unwrap();
     }
 
@@ -1953,10 +2006,10 @@ mod tests {
         claims.add_custom("tenant_id", "org_abc123").unwrap();
         claims.add_custom("roles", &["user", "admin"]).unwrap();
 
-        let token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
         assert!(token.starts_with("paseto.pq1.public."));
 
-        let verified = PasetoPQ::verify(&keypair.verifying_key, &token).unwrap();
+        let verified = PasetoPQ::verify(keypair.verifying_key(), &token).unwrap();
         let verified_claims = verified.claims();
 
         assert_eq!(verified_claims.subject(), Some("user123"));
@@ -1988,8 +2041,8 @@ mod tests {
             .set_expiration(now - Duration::hours(1))
             .unwrap();
 
-        let expired_token = PasetoPQ::sign(&keypair.signing_key, &expired_claims).unwrap();
-        let result = PasetoPQ::verify(&keypair.verifying_key, &expired_token);
+        let expired_token = PasetoPQ::sign(keypair.signing_key(), &expired_claims).unwrap();
+        let result = PasetoPQ::verify(keypair.verifying_key(), &expired_token);
         assert!(matches!(result.unwrap_err(), PqPasetoError::TokenExpired));
 
         // Test not-yet-valid token
@@ -1999,8 +2052,8 @@ mod tests {
             .set_not_before(now + Duration::hours(1))
             .unwrap();
 
-        let future_token = PasetoPQ::sign(&keypair.signing_key, &future_claims).unwrap();
-        let result = PasetoPQ::verify(&keypair.verifying_key, &future_token);
+        let future_token = PasetoPQ::sign(keypair.signing_key(), &future_claims).unwrap();
+        let result = PasetoPQ::verify(keypair.verifying_key(), &future_token);
         assert!(matches!(
             result.unwrap_err(),
             PqPasetoError::TokenNotYetValid
@@ -2016,8 +2069,8 @@ mod tests {
             .set_expiration(now + Duration::hours(1))
             .unwrap();
 
-        let valid_token = PasetoPQ::sign(&keypair.signing_key, &valid_claims).unwrap();
-        let verified = PasetoPQ::verify(&keypair.verifying_key, &valid_token).unwrap();
+        let valid_token = PasetoPQ::sign(keypair.signing_key(), &valid_claims).unwrap();
+        let verified = PasetoPQ::verify(keypair.verifying_key(), &valid_token).unwrap();
         assert_eq!(verified.claims().subject(), Some("user"));
     }
 
@@ -2031,11 +2084,11 @@ mod tests {
         claims.set_audience("api.example.com").unwrap();
         claims.set_issuer("my-service").unwrap();
 
-        let token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
 
         // Valid audience and issuer
         let verified = PasetoPQ::verify_with_options(
-            &keypair.verifying_key,
+            keypair.verifying_key(),
             &token,
             Some("api.example.com"),
             Some("my-service"),
@@ -2046,7 +2099,7 @@ mod tests {
 
         // Invalid audience
         let result = PasetoPQ::verify_with_options(
-            &keypair.verifying_key,
+            keypair.verifying_key(),
             &token,
             Some("wrong-audience"),
             Some("conflux-auth"),
@@ -2059,7 +2112,7 @@ mod tests {
 
         // Invalid issuer
         let result = PasetoPQ::verify_with_options(
-            &keypair.verifying_key,
+            keypair.verifying_key(),
             &token,
             Some("api.example.com"),
             Some("wrong-service"),
@@ -2096,26 +2149,26 @@ mod tests {
         let keypair = KeyPair::generate(&mut rng);
 
         // Too few parts
-        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.pq1");
+        let result = PasetoPQ::verify(keypair.verifying_key(), "paseto.pq1");
         assert!(matches!(
             result.unwrap_err(),
             PqPasetoError::InvalidFormat(_)
         ));
 
         // Wrong prefix
-        let result = PasetoPQ::verify(&keypair.verifying_key, "wrong.pq1.pq.payload.sig");
+        let result = PasetoPQ::verify(keypair.verifying_key(), "wrong.pq1.pq.payload.sig");
         assert!(matches!(
             result.unwrap_err(),
             PqPasetoError::InvalidFormat(_)
         ));
 
         // Invalid base64 in payload
-        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.pq1.public.invalid!!!.sig");
+        let result = PasetoPQ::verify(keypair.verifying_key(), "paseto.pq1.public.invalid!!!.sig");
         assert!(matches!(result.unwrap_err(), PqPasetoError::CryptoError(_)));
 
         // Invalid signature bytes
         let result = PasetoPQ::verify(
-            &keypair.verifying_key,
+            keypair.verifying_key(),
             "paseto.pq1.public.dGVzdA.invalid_sig",
         );
         assert!(matches!(result.unwrap_err(), PqPasetoError::CryptoError(_)));
@@ -2352,7 +2405,7 @@ mod tests {
         claims.set_subject("user123").unwrap();
 
         // Create both types of tokens
-        let public_token = PasetoPQ::sign(&asymmetric_keypair.signing_key, &claims).unwrap();
+        let public_token = PasetoPQ::sign(asymmetric_keypair.signing_key(), &claims).unwrap();
         let local_token = PasetoPQ::encrypt(&symmetric_key, &claims).unwrap();
 
         assert!(public_token.starts_with("paseto.pq1.public."));
@@ -2360,7 +2413,7 @@ mod tests {
 
         // Verify each with correct method
         let verified_public =
-            PasetoPQ::verify(&asymmetric_keypair.verifying_key, &public_token).unwrap();
+            PasetoPQ::verify(asymmetric_keypair.verifying_key(), &public_token).unwrap();
         let verified_local = PasetoPQ::decrypt(&symmetric_key, &local_token).unwrap();
 
         assert_eq!(verified_public.claims().subject(), Some("user123"));
@@ -2370,7 +2423,7 @@ mod tests {
         let result = PasetoPQ::decrypt(&symmetric_key, &public_token);
         assert!(result.is_err());
 
-        let result = PasetoPQ::verify(&asymmetric_keypair.verifying_key, &local_token);
+        let result = PasetoPQ::verify(asymmetric_keypair.verifying_key(), &local_token);
         assert!(result.is_err());
     }
 
@@ -2403,11 +2456,11 @@ mod tests {
 
         // Token with footer
         let token =
-            PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer)).unwrap();
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
         assert!(token.starts_with("paseto.pq1.public."));
         assert_eq!(token.split('.').count(), 6); // paseto.pq1.public.payload.signature.footer
 
-        let verified = PasetoPQ::verify_with_footer(&keypair.verifying_key, &token).unwrap();
+        let verified = PasetoPQ::verify_with_footer(keypair.verifying_key(), &token).unwrap();
         assert_eq!(verified.claims().subject(), Some("user123"));
 
         let verified_footer = verified.footer().unwrap();
@@ -2418,11 +2471,11 @@ mod tests {
         );
 
         // Token without footer should still work
-        let token_no_footer = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let token_no_footer = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
         assert_eq!(token_no_footer.split('.').count(), 5);
 
         let verified_no_footer =
-            PasetoPQ::verify(&keypair.verifying_key, &token_no_footer).unwrap();
+            PasetoPQ::verify(keypair.verifying_key(), &token_no_footer).unwrap();
         assert_eq!(verified_no_footer.claims().subject(), Some("user123"));
         assert!(verified_no_footer.footer().is_none());
     }
@@ -2502,13 +2555,13 @@ mod tests {
         footer.set_kid("test-key").unwrap();
 
         let token =
-            PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer)).unwrap();
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
 
         // Tamper with footer
         let mut tampered_token = token.clone();
         tampered_token.push('x');
 
-        let result = PasetoPQ::verify_with_footer(&keypair.verifying_key, &tampered_token);
+        let result = PasetoPQ::verify_with_footer(keypair.verifying_key(), &tampered_token);
         assert!(result.is_err()); // Tampered footer should fail verification
     }
 
@@ -2522,11 +2575,11 @@ mod tests {
         claims.set_subject("user123").unwrap();
 
         // Old format tokens (without footer) should work with new methods
-        let public_token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let public_token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
         let local_token = PasetoPQ::encrypt(&symmetric_key, &claims).unwrap();
 
         let verified_public =
-            PasetoPQ::verify_with_footer(&keypair.verifying_key, &public_token).unwrap();
+            PasetoPQ::verify_with_footer(keypair.verifying_key(), &public_token).unwrap();
         let verified_local = PasetoPQ::decrypt_with_footer(&symmetric_key, &local_token).unwrap();
 
         assert_eq!(verified_public.claims().subject(), Some("user123"));
@@ -2660,7 +2713,7 @@ mod tests {
         claims.set_subject("test-user").unwrap();
         claims.add_custom("role", "admin").unwrap();
 
-        let token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
         let parsed = ParsedToken::parse(&token).unwrap();
 
         // Verify basic properties
@@ -2691,7 +2744,7 @@ mod tests {
         footer.add_custom("tenant", "org_abc").unwrap();
 
         let token =
-            PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer)).unwrap();
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
         let parsed = ParsedToken::parse(&token).unwrap();
 
         // Verify footer parsing
@@ -2960,7 +3013,7 @@ mod tests {
         footer.set_kid("debug-key").unwrap();
 
         let token =
-            PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer)).unwrap();
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
         let parsed = ParsedToken::parse(&token).unwrap();
 
         // Test debugging methods
@@ -2985,7 +3038,7 @@ mod tests {
         let mut claims = Claims::new();
         claims.set_subject("middleware-test").unwrap();
 
-        let public_token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let public_token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
         let local_token = PasetoPQ::encrypt(&symmetric_key, &claims).unwrap();
 
         // Simulate middleware routing logic
@@ -3052,10 +3105,10 @@ mod tests {
         {
             let keypair = KeyPair::generate(&mut rng);
             let test_data = b"test message";
-            let signature = keypair.signing_key.0.sign(test_data);
+            let signature = keypair.signing_key().0.sign(test_data);
             assert!(
                 keypair
-                    .verifying_key
+                    .verifying_key()
                     .0
                     .verify(test_data, &signature)
                     .is_ok()
@@ -3104,7 +3157,7 @@ mod tests {
         let claims = Claims::new();
 
         // Test public token uses correct prefix
-        let public_token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let public_token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
         assert!(public_token.starts_with(TOKEN_PREFIX_PUBLIC));
 
         // Test local token uses correct prefix

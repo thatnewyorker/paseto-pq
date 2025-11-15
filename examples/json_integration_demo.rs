@@ -99,8 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", "=".repeat(50));
 
     // Create and verify public token
-    let public_token = PasetoPQ::sign(&keypair.signing_key, &claims)?;
-    let verified_public = PasetoPQ::verify(&keypair.verifying_key, &public_token)?;
+    let public_token = PasetoPQ::sign(keypair.signing_key(), &claims)?;
+    let verified_public = PasetoPQ::verify(keypair.verifying_key(), &public_token)?;
 
     println!("\n🔓 Public Token Claims (after verification):");
     let verified_json = verified_public.claims().to_json_string_pretty()?;

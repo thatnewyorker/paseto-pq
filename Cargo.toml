@@ -48,14 +48,19 @@ proptest = "1.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
-default = []
+default = ["ml-dsa-44"]  # Optimized for network performance
 logging = ["dep:tracing"]
 std = []
 
-# Security levels
-ml-dsa-44 = []   # Category 2 (128-bit security)
-ml-dsa-65 = []   # Category 3 (192-bit security) - recommended default
-ml-dsa-87 = []   # Category 5 (256-bit security)
+# Security levels - choose exactly one
+ml-dsa-44 = []   # Default: 128-bit security, smallest tokens, best network performance
+ml-dsa-65 = []   # Balanced: 192-bit security, larger tokens, good for high-value use cases
+ml-dsa-87 = []   # Maximum: 256-bit security, largest tokens, for critical infrastructure
+
+# Convenience aliases
+performance = ["ml-dsa-44"]        # Network-optimized (same as default)
+balanced = ["ml-dsa-65"]           # Security/performance balance
+maximum-security = ["ml-dsa-87"]   # Maximum security
 
 [package.metadata.docs.rs]
 all-features = true

@@ -108,9 +108,14 @@ A **PASETO-PQ** (Post-Quantum Platform-Agnostic SEcurity TOken) is a cryptograph
 
 PASETO-PQ encodes claims in a JSON [RFC8259] object, and provides security through either:
 - 🔒 **Symmetric encryption** (ChaCha20-Poly1305)
-- ✍️ **Post-quantum digital signatures** (ML-DSA)
+- ✍️ **Post-quantum digital signatures** (ML-DSA with configurable parameter sets)
 
 > ⚠️ **Quantum Threat**: PASETO-PQ addresses the emerging threat posed by cryptographically relevant quantum computers, which could break RSA, ECDSA, and ECDH used in existing token formats.
+
+**Security Level Selection:**
+- ML-DSA-44: 128-bit security, optimized for network protocols
+- ML-DSA-65: 192-bit security, balanced security/performance  
+- ML-DSA-87: 256-bit security, maximum protection for critical systems
 
 ### 1.1 🎯 Motivation for Post-Quantum Tokens
 
@@ -195,7 +200,7 @@ local:  # 🔒 Symmetric Encryption
   data: Encrypted payload
 
 public: # ✍️ Digital Signatures  
-  algorithm: ML-DSA-65
+  algorithm: ML-DSA (configurable: 44/65/87)
   security: Authentication only
   data: Unencrypted but signed payload
 ```
@@ -381,13 +386,17 @@ When defining future protocol versions, the following rules **SHOULD** or **MUST
 
 4.2.  pq1.public
 
-   *pq1.public* messages SHALL be signed using ML-DSA-65 as defined in
+   *pq1.public* messages SHALL be signed using ML-DSA as defined in
    [FIPS-204]. These messages provide authentication but do not prevent
    the contents from being read, including by those without either the
    *public key* or the *private key*.
 
-   ML-DSA-65 is chosen because:
-   - It provides strong post-quantum security based on lattice problems
+   ML-DSA parameter sets provide configurable security levels:
+   - ML-DSA-44: 128-bit security, optimized for distributed systems
+   - ML-DSA-65: 192-bit security, balanced approach (legacy default)
+   - ML-DSA-87: 256-bit security, maximum protection
+
+   All parameter sets provide strong post-quantum security based on lattice problems
    - It has been standardized by NIST in FIPS 204
    - The parameter set provides good security/performance balance
    - Signatures are deterministic, avoiding nonce-reuse vulnerabilities
@@ -522,9 +531,14 @@ When defining future protocol versions, the following rules **SHOULD** or **MUST
    3.  Decode the payload ("sm" sans "h", "f", and the optional trailing
        period between "m" and "f") from b64 to raw binary. Set:
 
-       *  "s" to the rightmost 3309 bytes (ML-DSA-65 signature size)
+       *  "s" to the rightmost N bytes (ML-DSA signature size, where N depends on parameter set)
 
        *  "m" to the leftmost remainder of the payload, excluding "s"
+
+       Note: Signature sizes vary by ML-DSA parameter set:
+       - ML-DSA-44: 2420 bytes
+       - ML-DSA-65: 3309 bytes  
+       - ML-DSA-87: 4627 bytes
 
    4.  Pack "h", "m", and "f" together (in that order) using PAE (see
        Section 2.2). We'll call this "m2".
@@ -980,9 +994,11 @@ A.1.2.  pq1.public (Post-Quantum Signatures) Test Vectors
 A.1.2.1.  Test Vector pq1-S-1
 
    Token:      paseto.pq1.public.eyJkYXRhIjoidGhpcyBpcyBhIHNpZ25lZCBtZXNzYWdlIiw
-               iZXhwIjoiMjAxOS0wMS0wMVQwMDowMDowMCswMDowMCJ9<3309-byte-ml-dsa-signature>
-   Private Key: <4864-byte-ml-dsa-private-key>
-   Public Key:  <1952-byte-ml-dsa-public-key>
+               iZXhwIjoiMjAxOS0wMS0wMVQwMDowMDowMCswMDowMCJ9<N-byte-ml-dsa-signature>
+   Private Key: <ml-dsa-private-key>
+   Public Key:  <ml-dsa-public-key>
+   
+   Note: Key and signature sizes depend on ML-DSA parameter set (44/65/87)
    Payload:     {"data":"this is a signed message",
                 "exp":"2019-01-01T00:00:00+00:00"}
    Footer:
@@ -994,10 +1010,12 @@ A.1.2.1.  Test Vector pq1-S-1
 A.1.2.2.  Test Vector pq1-S-2
 
    Token:      paseto.pq1.public.eyJkYXRhIjoidGhpcyBpcyBhIHNpZ25lZCBtZXNzYWdlIiw
-               iZXhwIjoiMjAxOS0wMS0wMVQwMDowMDowMCswMDowMCJ9<3309-byte-ml-dsa-signature>
+               iZXhwIjoiMjAxOS0wMS0wMVQwMDowMDowMCswMDowMCJ9<N-byte-ml-dsa-signature>
                .eyJraWQiOiJ6VmhNaVBCUDlmUmYyc25FY1E3Z0ZUaW9lQTlDT2NOeTlEZmdMMVc2MGhhTiJ9
-   Private Key: <4864-byte-ml-dsa-private-key>
-   Public Key:  <1952-byte-ml-dsa-public-key>
+   Private Key: <ml-dsa-private-key>
+   Public Key:  <ml-dsa-public-key>
+   
+   Note: Key and signature sizes depend on ML-DSA parameter set (44/65/87)
    Payload:     {"data":"this is a signed message",
                 "exp":"2019-01-01T00:00:00+00:00"}
    Footer:      {"kid":"zVhMiPBP9fRf2snEcQ7gFTioeA9COcNy9DfgL1W60haN"}
