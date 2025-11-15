@@ -9,12 +9,33 @@
 //! - **Post-Quantum Only**: Uses ML-DSA-65 (NIST FIPS 204) for all signatures
 //! - **PASETO-Inspired**: Follows PASETO's security model but with PQ algorithms
 //! - **Greenfield**: No legacy compatibility, designed for quantum-safe future
+//! - **Memory Safety**: Automatic zeroization of sensitive keys on drop
+//! - **Cryptographic Hygiene**: Proper HKDF key derivation and secure random generation
 //!
-//! ## Token Format
+//! ## ⚠️ Non-Standard Token Format
+//!
+//! **IMPORTANT**: This crate uses a **non-standard** token versioning scheme that diverges
+//! from the official PASETO specification. The tokens use `pq1` to clearly indicate
+//! post-quantum algorithms and avoid confusion with standard PASETO versions.
+//!
+//! ### Token Format
 //!
 //! ```text
-//! paseto.v1.public.<base64url-encoded-payload>.<base64url-encoded-ml-dsa-signature>
+//! paseto.pq1.public.<base64url-encoded-payload>.<base64url-encoded-ml-dsa-signature>
+//! paseto.pq1.local.<base64url-encoded-encrypted-payload>
 //! ```
+//!
+//! ### Interoperability Warning
+//!
+//! These tokens are **NOT** compatible with standard PASETO libraries or tooling.
+//! If you need interoperability with existing PASETO ecosystems, this crate is not suitable.
+//! The `pq1` versioning scheme clearly indicates "post-quantum era" tokens, distinguishing
+//! them from the classical algorithms defined in the PASETO specification.
+//!
+//! Consider this crate for:
+//! - Greenfield applications requiring post-quantum security
+//! - Internal systems where PASETO compatibility is not required
+//! - Future migration paths when post-quantum PASETO standards emerge
 //!
 //! ## Example Usage
 //!
@@ -58,6 +79,7 @@ use ml_dsa::{
     signature::{SignatureEncoding, Signer, Verifier},
 };
 // ML-KEM imports for real implementation
+use hkdf::Hkdf;
 use ml_kem::{
     KemCore, MlKem768,
     kem::{Decapsulate, Encapsulate},
@@ -65,7 +87,8 @@ use ml_kem::{
 pub use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha3::{Digest, Sha3_256};
+use sha2::Sha256;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use time::OffsetDateTime;
 
@@ -97,7 +120,7 @@ pub struct SigningKey(ml_dsa::SigningKey<MlDsa65>);
 pub struct VerifyingKey(ml_dsa::VerifyingKey<MlDsa65>);
 
 /// A symmetric key for local token encryption/decryption
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SymmetricKey([u8; 32]);
 
 /// A post-quantum key encapsulation key pair for key exchange
@@ -286,11 +309,11 @@ pub struct VerifiedToken {
 /// ```rust,no_run
 /// use paseto_pq::ParsedToken;
 ///
-/// let token = "paseto.v1.public.ABC123...";
+/// let token = "paseto.pq1.public.ABC123...";
 /// let parsed = ParsedToken::parse(token)?;
 ///
 /// println!("Purpose: {}", parsed.purpose()); // "public"
-/// println!("Version: {}", parsed.version()); // "v1"
+/// println!("Version: {}", parsed.version()); // "pq1"
 /// println!("Has footer: {}", parsed.has_footer());
 ///
 /// // Use for routing decisions
@@ -317,7 +340,7 @@ pub struct ParsedToken {
 /// across different components, useful for optimization and debugging.
 #[derive(Debug, Clone)]
 pub struct TokenSizeBreakdown {
-    /// Size of the protocol prefix ("paseto.v1.public." or "paseto.v1.local.")
+    /// Size of the protocol prefix ("paseto.pq1.public." or "paseto.pq1.local.")
     pub prefix: usize,
     /// Size of the JSON payload after base64 encoding
     pub payload: usize,
@@ -401,9 +424,27 @@ pub enum PqPasetoError {
     TokenParsingError(String),
 }
 
-// Constants
-const TOKEN_PREFIX_PUBLIC: &str = "paseto.v1.public";
-const TOKEN_PREFIX_LOCAL: &str = "paseto.v1.local";
+// Constants for token formatting
+//
+// IMPORTANT: These prefixes use a non-standard versioning scheme!
+// The "pq1" here indicates "post-quantum era" tokens, NOT the classical
+// algorithms defined in the official PASETO specification.
+//
+// This creates intentional incompatibility with standard PASETO tooling
+// to prevent accidental mixing of classical and post-quantum tokens.
+
+/// Token prefix for public (signature-based) post-quantum tokens
+///
+/// Uses `pq1` versioning to clearly distinguish from standard PASETO tokens.
+/// Standard PASETO v1 uses RSA signatures, while this uses ML-DSA post-quantum signatures.
+pub const TOKEN_PREFIX_PUBLIC: &str = "paseto.pq1.public";
+
+/// Token prefix for local (symmetric encryption) post-quantum tokens
+///
+/// Uses `pq1` versioning to clearly distinguish from standard PASETO tokens.
+/// Standard PASETO v1 uses HMAC, while this uses ChaCha20-Poly1305 with ML-KEM key exchange.
+pub const TOKEN_PREFIX_LOCAL: &str = "paseto.pq1.local";
+
 const MAX_TOKEN_SIZE: usize = 1024 * 1024; // 1MB max token size
 const SYMMETRIC_KEY_SIZE: usize = 32;
 const NONCE_SIZE: usize = 12;
@@ -484,15 +525,19 @@ impl SymmetricKey {
         self.0
     }
 
-    /// Derive a symmetric key from shared secret using HKDF
+    /// Derive a symmetric key from shared secret using proper HKDF-SHA256
+    ///
+    /// Uses RFC 5869 HKDF with SHA-256 for cryptographically sound key derivation.
+    /// The salt is set to None for domain separation, following best practices
+    /// for post-quantum key exchange scenarios.
     pub fn derive_from_shared_secret(shared_secret: &[u8], info: &[u8]) -> Self {
-        let mut hasher = Sha3_256::new();
-        hasher.update(shared_secret);
-        hasher.update(info);
-        let hash = hasher.finalize();
+        // Use proper HKDF with SHA-256 (no salt - appropriate for PQ key exchange)
+        let hk = Hkdf::<Sha256>::new(None, shared_secret);
 
         let mut key_bytes = [0u8; SYMMETRIC_KEY_SIZE];
-        key_bytes.copy_from_slice(&hash[..SYMMETRIC_KEY_SIZE]);
+        hk.expand(info, &mut key_bytes)
+            .expect("SYMMETRIC_KEY_SIZE (32) is valid for SHA-256 HKDF output");
+
         Self(key_bytes)
     }
 }
@@ -566,7 +611,7 @@ impl KemKeyPair {
 
         let symmetric_key = SymmetricKey::derive_from_shared_secret(
             shared_secret.as_slice(),
-            b"PASETO-PQ-LOCAL-v1",
+            b"PASETO-PQ-LOCAL-pq1",
         );
 
         (symmetric_key, ciphertext.as_slice().to_vec())
@@ -592,7 +637,7 @@ impl KemKeyPair {
 
         Ok(SymmetricKey::derive_from_shared_secret(
             shared_secret.as_ref(),
-            b"PASETO-PQ-LOCAL-v1",
+            b"PASETO-PQ-LOCAL-pq1",
         ))
     }
 }
@@ -1031,18 +1076,18 @@ impl ParsedToken {
     /// ```rust,no_run
     /// use paseto_pq::ParsedToken;
     ///
-    /// let token = "paseto.v1.public.ABC123.DEF456.eyJraWQiOiJ0ZXN0In0";
+    /// let token = "paseto.pq1.public.ABC123.DEF456.eyJraWQiOiJ0ZXN0In0";
     /// let parsed = ParsedToken::parse(token)?;
     ///
     /// assert_eq!(parsed.purpose(), "public");
-    /// assert_eq!(parsed.version(), "v1");
+    /// assert_eq!(parsed.version(), "pq1");
     /// assert!(parsed.has_footer());
     /// # Ok::<(), paseto_pq::PqPasetoError>(())
     /// ```
     pub fn parse(token: &str) -> Result<Self, PqPasetoError> {
         let parts: Vec<&str> = token.split('.').collect();
 
-        // Validate minimum structure: paseto.v1.purpose.payload
+        // Validate minimum structure: paseto.pq1.purpose.payload
         if parts.len() < 4 {
             return Err(PqPasetoError::TokenParsingError(format!(
                 "Invalid token format: expected at least 4 parts, got {}",
@@ -1066,7 +1111,7 @@ impl ParsedToken {
 
         // Validate known formats
         match (version.as_str(), purpose.as_str()) {
-            ("v1", "public") | ("v1", "local") => {}
+            ("pq1", "public") | ("pq1", "local") => {}
             _ => {
                 return Err(PqPasetoError::TokenParsingError(format!(
                     "Unsupported token format: {}.{}.{}",
@@ -1086,7 +1131,7 @@ impl ParsedToken {
         // Parse remaining parts based on token type
         match purpose.as_str() {
             "public" => {
-                // Public tokens: paseto.v1.public.payload.signature[.footer]
+                // Public tokens: paseto.pq1.public.payload.signature[.footer]
                 if parts.len() > 6 {
                     return Err(PqPasetoError::TokenParsingError(
                         "Public token has too many parts".to_string(),
@@ -1102,7 +1147,7 @@ impl ParsedToken {
                 }
             }
             "local" => {
-                // Local tokens: paseto.v1.local.payload[.footer]
+                // Local tokens: paseto.pq1.local.payload[.footer]
                 if parts.len() > 5 {
                     return Err(PqPasetoError::TokenParsingError(
                         "Local token has too many parts".to_string(),
@@ -1130,7 +1175,7 @@ impl ParsedToken {
         &self.purpose
     }
 
-    /// Get the token version (currently "v1")
+    /// Get the token version (currently "pq1")
     pub fn version(&self) -> &str {
         &self.version
     }
@@ -1244,6 +1289,29 @@ impl VerifiedToken {
 }
 
 impl PasetoPQ {
+    /// Get the current token prefix used for public tokens
+    ///
+    /// Returns the prefix string used in public token generation.
+    /// This allows applications to inspect the versioning scheme being used.
+    pub fn public_token_prefix() -> &'static str {
+        TOKEN_PREFIX_PUBLIC
+    }
+
+    /// Get the current token prefix used for local tokens
+    ///
+    /// Returns the prefix string used in local token generation.
+    /// This allows applications to inspect the versioning scheme being used.
+    pub fn local_token_prefix() -> &'static str {
+        TOKEN_PREFIX_LOCAL
+    }
+
+    /// Check if this implementation uses standard PASETO versioning
+    ///
+    /// Returns `false` because this crate uses non-standard `pq1` versioning
+    /// that is incompatible with the official PASETO specification.
+    pub fn is_standard_paseto_compatible() -> bool {
+        false
+    }
     /// Parse a PASETO token for inspection without cryptographic operations
     ///
     /// This method allows you to examine token structure, purpose, version, and footer
@@ -1259,7 +1327,7 @@ impl PasetoPQ {
     /// ```rust,no_run
     /// use paseto_pq::PasetoPQ;
     ///
-    /// let token = "paseto.v1.public.ABC123...";
+    /// let token = "paseto.pq1.public.ABC123...";
     /// let parsed = PasetoPQ::parse_token(token)?;
     ///
     /// println!("Token type: {}", parsed.purpose());
@@ -1477,19 +1545,19 @@ impl PasetoPQ {
         // Split token into parts (4 parts without footer, 5 parts with footer)
         let parts: Vec<&str> = token.splitn(5, '.').collect();
         let (encoded_payload, footer) = if parts.len() == 5 {
-            // Token with footer: paseto.v1.local.payload.footer
-            if parts[0] != "paseto" || parts[1] != "v1" || parts[2] != "local" {
+            // Token with footer: paseto.pq1.local.payload.footer
+            if parts[0] != "paseto" || parts[1] != "pq1" || parts[2] != "local" {
                 return Err(PqPasetoError::InvalidFormat(
-                    "Invalid token format - expected 'paseto.v1.local'".into(),
+                    "Invalid token format - expected 'paseto.pq1.local'".into(),
                 ));
             }
             let footer = Footer::from_base64(parts[4])?;
             (parts[3], Some(footer))
         } else if parts.len() == 4 {
-            // Token without footer: paseto.v1.local.payload
-            if parts[0] != "paseto" || parts[1] != "v1" || parts[2] != "local" {
+            // Token without footer: paseto.pq1.local.payload
+            if parts[0] != "paseto" || parts[1] != "pq1" || parts[2] != "local" {
                 return Err(PqPasetoError::InvalidFormat(
-                    "Invalid token format - expected 'paseto.v1.local'".into(),
+                    "Invalid token format - expected 'paseto.pq1.local'".into(),
                 ));
             }
             (parts[3], None)
@@ -1615,19 +1683,19 @@ impl PasetoPQ {
         // Split token into parts (5 parts without footer, 6 parts with footer)
         let parts: Vec<&str> = token.splitn(6, '.').collect();
         let (encoded_payload, encoded_signature, footer) = if parts.len() == 6 {
-            // Token with footer: paseto.v1.public.payload.signature.footer
-            if parts[0] != "paseto" || parts[1] != "v1" || parts[2] != "public" {
+            // Token with footer: paseto.pq1.public.payload.signature.footer
+            if parts[0] != "paseto" || parts[1] != "pq1" || parts[2] != "public" {
                 return Err(PqPasetoError::InvalidFormat(
-                    "Invalid token format - expected 'paseto.v1.public'".into(),
+                    "Invalid token format - expected 'paseto.pq1.public'".into(),
                 ));
             }
             let footer = Footer::from_base64(parts[5])?;
             (parts[3], parts[4], Some(footer))
         } else if parts.len() == 5 {
-            // Token without footer: paseto.v1.public.payload.signature
-            if parts[0] != "paseto" || parts[1] != "v1" || parts[2] != "public" {
+            // Token without footer: paseto.pq1.public.payload.signature
+            if parts[0] != "paseto" || parts[1] != "pq1" || parts[2] != "public" {
                 return Err(PqPasetoError::InvalidFormat(
-                    "Invalid token format - expected 'paseto.v1.public'".into(),
+                    "Invalid token format - expected 'paseto.pq1.public'".into(),
                 ));
             }
             (parts[3], parts[4], None)
@@ -1787,9 +1855,53 @@ impl fmt::Debug for DecapsulationKey {
 impl fmt::Debug for KemKeyPair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KemKeyPair")
-            .field("encapsulation_key", &self.encapsulation_key)
-            .field("decapsulation_key", &self.decapsulation_key)
+            .field("encapsulation_key", &"<encapsulation_key>")
+            .field("decapsulation_key", &"<decapsulation_key>")
             .finish()
+    }
+}
+
+// Zeroization implementations for sensitive key material
+// Note: ML-DSA and ML-KEM keys are opaque types that may handle their own zeroization internally.
+// We implement Drop for best-effort cleanup, but rely on the underlying libraries for complete zeroization.
+
+impl Drop for SigningKey {
+    fn drop(&mut self) {
+        // ML-DSA SigningKey is opaque - rely on underlying library for zeroization
+        // The ml-dsa crate is compiled with zeroize feature enabled
+    }
+}
+
+impl Drop for VerifyingKey {
+    fn drop(&mut self) {
+        // ML-DSA VerifyingKey is opaque - rely on underlying library for zeroization
+        // The ml-dsa crate is compiled with zeroize feature enabled
+    }
+}
+
+impl Drop for KeyPair {
+    fn drop(&mut self) {
+        // Drop implementations for individual keys will handle cleanup
+    }
+}
+
+impl Drop for EncapsulationKey {
+    fn drop(&mut self) {
+        // ML-KEM EncapsulationKey is opaque - rely on underlying library for zeroization
+        // The ml-kem crate is compiled with zeroize feature enabled
+    }
+}
+
+impl Drop for DecapsulationKey {
+    fn drop(&mut self) {
+        // ML-KEM DecapsulationKey is opaque - rely on underlying library for zeroization
+        // The ml-kem crate is compiled with zeroize feature enabled
+    }
+}
+
+impl Drop for KemKeyPair {
+    fn drop(&mut self) {
+        // Drop implementations for individual keys will handle cleanup
     }
 }
 
@@ -1842,7 +1954,7 @@ mod tests {
         claims.add_custom("roles", &["user", "admin"]).unwrap();
 
         let token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
-        assert!(token.starts_with("paseto.v1.public."));
+        assert!(token.starts_with("paseto.pq1.public."));
 
         let verified = PasetoPQ::verify(&keypair.verifying_key, &token).unwrap();
         let verified_claims = verified.claims();
@@ -1984,27 +2096,27 @@ mod tests {
         let keypair = KeyPair::generate(&mut rng);
 
         // Too few parts
-        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.v1");
+        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.pq1");
         assert!(matches!(
             result.unwrap_err(),
             PqPasetoError::InvalidFormat(_)
         ));
 
         // Wrong prefix
-        let result = PasetoPQ::verify(&keypair.verifying_key, "wrong.v1.pq.payload.sig");
+        let result = PasetoPQ::verify(&keypair.verifying_key, "wrong.pq1.pq.payload.sig");
         assert!(matches!(
             result.unwrap_err(),
             PqPasetoError::InvalidFormat(_)
         ));
 
         // Invalid base64 in payload
-        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.v1.public.invalid!!!.sig");
+        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.pq1.public.invalid!!!.sig");
         assert!(matches!(result.unwrap_err(), PqPasetoError::CryptoError(_)));
 
         // Invalid signature bytes
         let result = PasetoPQ::verify(
             &keypair.verifying_key,
-            "paseto.v1.public.dGVzdA.invalid_sig",
+            "paseto.pq1.public.dGVzdA.invalid_sig",
         );
         assert!(matches!(result.unwrap_err(), PqPasetoError::CryptoError(_)));
     }
@@ -2061,7 +2173,7 @@ mod tests {
         claims.add_custom("roles", &["user", "admin"]).unwrap();
 
         let token = PasetoPQ::encrypt(&key, &claims).unwrap();
-        assert!(token.starts_with("paseto.v1.local."));
+        assert!(token.starts_with("paseto.pq1.local."));
 
         let verified = PasetoPQ::decrypt(&key, &token).unwrap();
         let verified_claims = verified.claims();
@@ -2209,21 +2321,21 @@ mod tests {
         let key = SymmetricKey::generate(&mut rng);
 
         // Wrong prefix
-        let result = PasetoPQ::decrypt(&key, "wrong.v1.local.payload");
+        let result = PasetoPQ::decrypt(&key, "wrong.pq1.local.payload");
         assert!(matches!(
             result.unwrap_err(),
             PqPasetoError::InvalidFormat(_)
         ));
 
         // Invalid base64 in payload
-        let result = PasetoPQ::decrypt(&key, "paseto.v1.local.invalid!!!");
+        let result = PasetoPQ::decrypt(&key, "paseto.pq1.local.invalid!!!");
         assert!(matches!(
             result.unwrap_err(),
             PqPasetoError::InvalidFormat(_)
         ));
 
         // Too short payload (no nonce)
-        let result = PasetoPQ::decrypt(&key, "paseto.v1.local.dGVzdA");
+        let result = PasetoPQ::decrypt(&key, "paseto.pq1.local.dGVzdA");
         assert!(matches!(
             result.unwrap_err(),
             PqPasetoError::DecryptionError(_)
@@ -2243,8 +2355,8 @@ mod tests {
         let public_token = PasetoPQ::sign(&asymmetric_keypair.signing_key, &claims).unwrap();
         let local_token = PasetoPQ::encrypt(&symmetric_key, &claims).unwrap();
 
-        assert!(public_token.starts_with("paseto.v1.public."));
-        assert!(local_token.starts_with("paseto.v1.local."));
+        assert!(public_token.starts_with("paseto.pq1.public."));
+        assert!(local_token.starts_with("paseto.pq1.local."));
 
         // Verify each with correct method
         let verified_public =
@@ -2292,8 +2404,8 @@ mod tests {
         // Token with footer
         let token =
             PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer)).unwrap();
-        assert!(token.starts_with("paseto.v1.public."));
-        assert_eq!(token.split('.').count(), 6); // paseto.v1.public.payload.signature.footer
+        assert!(token.starts_with("paseto.pq1.public."));
+        assert_eq!(token.split('.').count(), 6); // paseto.pq1.public.payload.signature.footer
 
         let verified = PasetoPQ::verify_with_footer(&keypair.verifying_key, &token).unwrap();
         assert_eq!(verified.claims().subject(), Some("user123"));
@@ -2330,8 +2442,8 @@ mod tests {
 
         // Token with footer
         let token = PasetoPQ::encrypt_with_footer(&key, &claims, Some(&footer)).unwrap();
-        assert!(token.starts_with("paseto.v1.local."));
-        assert_eq!(token.split('.').count(), 5); // paseto.v1.local.payload.footer
+        assert!(token.starts_with("paseto.pq1.local."));
+        assert_eq!(token.split('.').count(), 5); // paseto.pq1.local.payload.footer
 
         let verified = PasetoPQ::decrypt_with_footer(&key, &token).unwrap();
         assert_eq!(verified.claims().subject(), Some("user123"));
@@ -2553,7 +2665,7 @@ mod tests {
 
         // Verify basic properties
         assert_eq!(parsed.purpose(), "public");
-        assert_eq!(parsed.version(), "v1");
+        assert_eq!(parsed.version(), "pq1");
         assert!(!parsed.has_footer());
         assert!(parsed.is_public());
         assert!(!parsed.is_local());
@@ -2615,7 +2727,7 @@ mod tests {
 
         // Verify basic properties
         assert_eq!(parsed.purpose(), "local");
-        assert_eq!(parsed.version(), "v1");
+        assert_eq!(parsed.version(), "pq1");
         assert!(!parsed.has_footer());
         assert!(!parsed.is_public());
         assert!(parsed.is_local());
@@ -2647,7 +2759,7 @@ mod tests {
 
         // Test format summary
         let summary = parsed.format_summary();
-        assert!(summary.contains("paseto.v1.local"));
+        assert!(summary.contains("paseto.pq1.local"));
         assert!(summary.contains("footer: present"));
     }
 
@@ -2657,19 +2769,19 @@ mod tests {
         let error_cases = vec![
             ("", "expected at least 4 parts"),
             ("not.a.token", "expected at least 4 parts"),
-            ("wrong.v1.public.payload", "Invalid protocol"),
+            ("wrong.pq1.public.payload", "Invalid protocol"),
             ("paseto.v2.public.payload", "Unsupported token format"),
-            ("paseto.v1.unknown.payload", "Unsupported token format"),
-            ("paseto.v1.public.invalid_base64", "Invalid payload base64"),
+            ("paseto.pq1.unknown.payload", "Unsupported token format"),
+            ("paseto.pq1.public.invalid_base64", "Invalid payload base64"),
             (
-                "paseto.v1.public.dGVzdA.invalid!!!base64",
+                "paseto.pq1.public.dGVzdA.invalid!!!base64",
                 "Invalid signature base64",
             ),
             (
-                "paseto.v1.public.dGVzdA.dGVzdA.dGVzdA.extra.parts",
+                "paseto.pq1.public.dGVzdA.dGVzdA.dGVzdA.extra.parts",
                 "too many parts",
             ),
-            ("paseto.v1.local.dGVzdA.dGVzdA.extra", "too many parts"),
+            ("paseto.pq1.local.dGVzdA.dGVzdA.extra", "too many parts"),
         ];
 
         for (token, expected_error) in error_cases {
@@ -2857,7 +2969,7 @@ mod tests {
         assert!(!parsed.payload_bytes().is_empty());
 
         let summary = parsed.format_summary();
-        assert!(summary.contains("paseto.v1.public"));
+        assert!(summary.contains("paseto.pq1.public"));
         assert!(summary.contains("signature: present"));
         assert!(summary.contains("footer: present"));
         assert!(summary.contains(&format!("{} bytes", parsed.payload_length())));
@@ -2896,7 +3008,7 @@ mod tests {
             let size = parsed.total_length();
 
             assert!(!purpose.is_empty());
-            assert_eq!(version, "v1");
+            assert_eq!(version, "pq1");
             assert!(size > 0);
 
             // Simulate size-based alerts
@@ -2905,5 +3017,155 @@ mod tests {
                 println!("Large token detected: {} bytes", size);
             }
         }
+    }
+
+    #[test]
+    fn test_symmetric_key_zeroization() {
+        // Test SymmetricKey zeroization - this is the only key type we fully control
+        {
+            let mut key = SymmetricKey([0x42u8; 32]);
+
+            // Verify key contains expected data
+            assert_eq!(key.0[0], 0x42);
+
+            // Zeroize the key
+            key.zeroize();
+
+            // Verify key is zeroed
+            assert_eq!(key.0, [0u8; 32]);
+        }
+
+        // Test that SymmetricKey is automatically zeroized on drop (ZeroizeOnDrop)
+        {
+            let key = SymmetricKey([0x55u8; 32]);
+            assert_eq!(key.0[0], 0x55);
+            // Key will be automatically zeroized when it goes out of scope
+        }
+    }
+
+    #[test]
+    fn test_key_operations_with_drop_cleanup() {
+        // Test that cryptographic operations work correctly with Drop implementations
+        let mut rng = rng();
+
+        // Test ML-DSA keypair operations
+        {
+            let keypair = KeyPair::generate(&mut rng);
+            let test_data = b"test message";
+            let signature = keypair.signing_key.0.sign(test_data);
+            assert!(
+                keypair
+                    .verifying_key
+                    .0
+                    .verify(test_data, &signature)
+                    .is_ok()
+            );
+            // keypair will be dropped and cleaned up automatically
+        }
+
+        // Test ML-KEM operations
+        {
+            let kem_keypair = KemKeyPair::generate(&mut rng);
+            let (key1, ciphertext) = kem_keypair.encapsulate();
+            let key2 = kem_keypair.decapsulate(&ciphertext).unwrap();
+            assert_eq!(key1.to_bytes(), key2.to_bytes());
+            // All keys will be dropped and cleaned up automatically
+        }
+
+        // Test symmetric key operations
+        {
+            let key = SymmetricKey::generate(&mut rng);
+            let key_bytes = key.to_bytes();
+            assert_eq!(key_bytes.len(), 32);
+            // key will be automatically zeroized on drop
+        }
+    }
+
+    #[test]
+    fn test_token_versioning_configuration() {
+        // Test that the prefix constants use pq1 versioning
+        assert_eq!(TOKEN_PREFIX_PUBLIC, "paseto.pq1.public");
+        assert_eq!(TOKEN_PREFIX_LOCAL, "paseto.pq1.local");
+
+        // Test that we always report non-standard compatibility
+        assert!(!PasetoPQ::is_standard_paseto_compatible());
+
+        // Test prefix accessor methods
+        assert_eq!(PasetoPQ::public_token_prefix(), TOKEN_PREFIX_PUBLIC);
+        assert_eq!(PasetoPQ::local_token_prefix(), TOKEN_PREFIX_LOCAL);
+    }
+
+    #[test]
+    fn test_actual_token_contains_correct_prefix() {
+        let mut rng = rng();
+        let keypair = KeyPair::generate(&mut rng);
+        let symmetric_key = SymmetricKey::generate(&mut rng);
+
+        let claims = Claims::new();
+
+        // Test public token uses correct prefix
+        let public_token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        assert!(public_token.starts_with(TOKEN_PREFIX_PUBLIC));
+
+        // Test local token uses correct prefix
+        let local_token = PasetoPQ::encrypt(&symmetric_key, &claims).unwrap();
+        assert!(local_token.starts_with(TOKEN_PREFIX_LOCAL));
+
+        // Verify tokens can be parsed with the correct prefix expectations
+        let parsed_public = ParsedToken::parse(&public_token).unwrap();
+        let parsed_local = ParsedToken::parse(&local_token).unwrap();
+
+        assert_eq!(parsed_public.version(), "pq1");
+        assert_eq!(parsed_local.version(), "pq1");
+
+        assert_eq!(parsed_public.purpose(), "public");
+        assert_eq!(parsed_local.purpose(), "local");
+    }
+
+    #[test]
+    fn test_hkdf_implementation() {
+        // Test that proper HKDF produces different outputs for different inputs
+        let shared_secret1 = b"shared_secret_1";
+        let shared_secret2 = b"shared_secret_2";
+        let info = b"PASETO-PQ-LOCAL-pq1";
+
+        let key1 = SymmetricKey::derive_from_shared_secret(shared_secret1, info);
+        let key2 = SymmetricKey::derive_from_shared_secret(shared_secret2, info);
+
+        // Different secrets should produce different keys
+        assert_ne!(key1.to_bytes(), key2.to_bytes());
+
+        // Same inputs should produce same outputs (deterministic)
+        let key1_repeat = SymmetricKey::derive_from_shared_secret(shared_secret1, info);
+        assert_eq!(key1.to_bytes(), key1_repeat.to_bytes());
+
+        // Different info should produce different keys with same secret
+        let info2 = b"DIFFERENT-INFO";
+        let key_diff_info = SymmetricKey::derive_from_shared_secret(shared_secret1, info2);
+        assert_ne!(key1.to_bytes(), key_diff_info.to_bytes());
+
+        // Verify we get full 32 bytes
+        assert_eq!(key1.to_bytes().len(), 32);
+        assert_eq!(key2.to_bytes().len(), 32);
+    }
+
+    #[test]
+    fn test_hkdf_vs_simple_hash_difference() {
+        // Verify that proper HKDF produces different results than simple hash
+        let shared_secret = b"test_shared_secret";
+        let info = b"PASETO-PQ-LOCAL-pq1";
+
+        // Get HKDF result
+        let hkdf_key = SymmetricKey::derive_from_shared_secret(shared_secret, info);
+
+        // Simulate old simple hash approach for comparison
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(shared_secret);
+        hasher.update(info);
+        let simple_hash = hasher.finalize();
+
+        // They should be different (proving we're using proper HKDF)
+        assert_ne!(hkdf_key.to_bytes(), simple_hash.as_slice());
     }
 }

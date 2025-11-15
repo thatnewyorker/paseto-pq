@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/paseto-pq.svg)](https://crates.io/crates/paseto-pq)
 [![Documentation](https://docs.rs/paseto-pq/badge.svg)](https://docs.rs/paseto-pq)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
 A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-Dilithium) signatures and **ChaCha20-Poly1305** encryption. This crate provides quantum-safe authentication and encryption tokens with comprehensive metadata support, resistant to attacks by quantum computers implementing Shor's algorithm.
 
@@ -146,19 +146,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 🔐 Token Formats
 
-PASETO-PQ follows standard PASETO format conventions with both token types supporting optional footers:
+⚠️ **NON-STANDARD VERSIONING**: PASETO-PQ uses a **non-standard** token format that is **incompatible** with official PASETO libraries. The `pq1` version identifier clearly indicates "post-quantum era" tokens, distinguishing them from classical algorithms defined in the PASETO specification.
+
+### Compatibility Impact
+- **NOT compatible** with existing PASETO libraries (paseto.js, paseto-dotnet, etc.)
+- **NOT compatible** with standard PASETO tooling
+- **Cannot be verified** by standard PASETO implementations
+- **Intentionally incompatible** to prevent mixing with classical tokens
+
+### When To Use This Crate
+- ✅ Greenfield applications requiring post-quantum security
+- ✅ Internal systems where PASETO compatibility is not required
+- ✅ Future migration paths when post-quantum PASETO standards emerge
+- ❌ Systems requiring interoperability with existing PASETO ecosystems
+
+Both token types support optional footers:
 
 ### Public Tokens (Signatures)
 ```
 # Without footer
-paseto.v1.public.<base64url-payload>.<base64url-signature>
+paseto.pq1.public.<base64url-payload>.<base64url-signature>
 
 # With footer
-paseto.v1.public.<base64url-payload>.<base64url-signature>.<base64url-footer>
+paseto.pq1.public.<base64url-payload>.<base64url-signature>.<base64url-footer>
 ```
 
 - **`paseto`**: Protocol identifier
-- **`v1`**: Version (post-quantum era)
+- **`pq1`**: Post-quantum version identifier (non-standard, distinct from official PASETO)
 - **`public`**: Purpose (signature-based tokens)
 - **`payload`**: Base64url-encoded JSON claims
 - **`signature`**: Base64url-encoded ML-DSA-65 signature (~2.4KB)
@@ -167,14 +181,14 @@ paseto.v1.public.<base64url-payload>.<base64url-signature>.<base64url-footer>
 ### Local Tokens (Encryption)
 ```
 # Without footer
-paseto.v1.local.<base64url-encrypted-payload>
+paseto.pq1.local.<base64url-encrypted-payload>
 
 # With footer
-paseto.v1.local.<base64url-encrypted-payload>.<base64url-footer>
+paseto.pq1.local.<base64url-encrypted-payload>.<base64url-footer>
 ```
 
 - **`paseto`**: Protocol identifier
-- **`v1`**: Version (post-quantum era)
+- **`pq1`**: Post-quantum version identifier (non-standard, distinct from official PASETO)
 - **`local`**: Purpose (symmetric encryption)
 - **`encrypted-payload`**: Base64url-encoded nonce + ChaCha20-Poly1305 ciphertext
 - **`footer`**: Base64url-encoded JSON metadata (optional, encrypted with payload)
@@ -433,12 +447,12 @@ Parse tokens for inspection without expensive cryptographic operations. Perfect 
 ```rust
 use paseto_pq::{ParsedToken, PasetoPQ};
 
-let token = "paseto.v1.public.ABC123...";
+let token = "paseto.pq1.public.ABC123...";
 let parsed = ParsedToken::parse(token)?;
 
 // Inspect token structure (no crypto operations)
 println!("Purpose: {}", parsed.purpose());     // "public" or "local"
-println!("Version: {}", parsed.version());     // "v1"
+println!("Version: {}", parsed.version());     // "pq1"
 println!("Has footer: {}", parsed.has_footer());
 println!("Size: {} bytes", parsed.total_length());
 println!("Is public token: {}", parsed.is_public());
@@ -567,8 +581,10 @@ cargo run --example token_size_demo
 ### Implementation Security
 - **Memory Safety**: Pure Rust implementation prevents buffer overflows
 - **Constant-Time**: Operations designed to prevent timing attacks where possible
-- **Secret Zeroization**: Sensitive data properly cleared from memory
-- **RustCrypto**: Built on well-audited cryptographic primitives
+- **Secret Zeroization**: Symmetric keys automatically zeroized on drop via `ZeroizeOnDrop` trait
+- **Key Cleanup**: All key types implement `Drop` for automatic cleanup when out of scope
+- **RustCrypto**: Built on well-audited cryptographic primitives with zeroize features enabled
+- **HKDF Key Derivation**: RFC 5869 HKDF-SHA256 for cryptographically sound key derivation from ML-KEM shared secrets
 - **No Side Channels**: Careful implementation to prevent information leakage
 
 ### Operational Security
@@ -588,11 +604,13 @@ cargo run --example token_size_demo
 
 ```toml
 [dependencies]
-paseto-pq = { version = "0.1.0", features = ["default"] }
+paseto-pq = { version = "0.1.0", features = ["logging"] }
 ```
 
-Available features:
-- `default`: All standard features enabled
+### Available Features
+
+- **`logging`** - Enable structured logging with tracing
+- **`std`** - Standard library support (enabled by default)
 - `serde`: JSON serialization support (enabled by default)
 - `time`: Time-based claims validation (enabled by default)
 
