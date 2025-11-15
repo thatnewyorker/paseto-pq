@@ -57,8 +57,11 @@ use ml_dsa::{
     KeyGen, MlDsa65,
     signature::{SignatureEncoding, Signer, Verifier},
 };
-// ML-KEM imports temporarily disabled for mock implementation
-// use ml_kem::{KemCore, MlKem768};
+// ML-KEM imports for real implementation
+use ml_kem::{
+    KemCore, MlKem768,
+    kem::{Decapsulate, Encapsulate},
+};
 pub use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -106,11 +109,11 @@ pub struct KemKeyPair {
 
 /// An encapsulation key for ML-KEM key exchange
 #[derive(Clone)]
-pub struct EncapsulationKey(Vec<u8>);
+pub struct EncapsulationKey(<MlKem768 as KemCore>::EncapsulationKey);
 
 /// A decapsulation key for ML-KEM key exchange
 #[derive(Clone)]
-pub struct DecapsulationKey(Vec<u8>);
+pub struct DecapsulationKey(<MlKem768 as KemCore>::DecapsulationKey);
 
 /// Footer data for additional authenticated metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -495,102 +498,100 @@ impl SymmetricKey {
 }
 
 impl KemKeyPair {
-    /// Generate a new post-quantum KEM key pair
-    ///
-    /// **Note**: This is currently a mock implementation for demonstration.
-    /// A full implementation would use actual ML-KEM-768 cryptography.
+    /// Generate a new post-quantum KEM key pair using ML-KEM-768
     #[cfg_attr(feature = "logging", instrument(skip(rng)))]
-    pub fn generate<R: CryptoRng + RngCore>(rng: &mut R) -> Self {
-        // For demonstration purposes, generate placeholder keys
-        // In a full implementation, this would use actual ML-KEM-768
-        let mut ek_bytes = vec![0u8; 1184]; // ML-KEM-768 encapsulation key size
-        let mut dk_bytes = vec![0u8; 2400]; // ML-KEM-768 decapsulation key size
-        rng.fill_bytes(&mut ek_bytes);
-        rng.fill_bytes(&mut dk_bytes);
+    pub fn generate<R: CryptoRng + RngCore>(_rng: &mut R) -> Self {
+        // Generate actual ML-KEM-768 key pair
+        let (dk, ek) = MlKem768::generate(&mut chacha20poly1305::aead::OsRng);
 
         #[cfg(feature = "logging")]
-        debug!("Generated new ML-KEM-768 key pair (mock implementation)");
+        debug!("Generated new ML-KEM-768 key pair");
 
         Self {
-            encapsulation_key: EncapsulationKey(ek_bytes),
-            decapsulation_key: DecapsulationKey(dk_bytes),
+            encapsulation_key: EncapsulationKey(ek),
+            decapsulation_key: DecapsulationKey(dk),
         }
     }
 
     /// Export the encapsulation key as bytes
     pub fn encapsulation_key_to_bytes(&self) -> Vec<u8> {
-        self.encapsulation_key.0.clone()
+        use ml_kem::EncodedSizeUser;
+        self.encapsulation_key.0.as_bytes().to_vec()
     }
 
     /// Import encapsulation key from bytes
     pub fn encapsulation_key_from_bytes(bytes: &[u8]) -> Result<EncapsulationKey, PqPasetoError> {
-        // Basic length validation - ML-KEM-768 encapsulation key is 1184 bytes
+        use ml_kem::{EncodedSizeUser, array::Array};
         if bytes.len() != 1184 {
             return Err(PqPasetoError::CryptoError(
                 "Invalid encapsulation key length".to_string(),
             ));
         }
-        Ok(EncapsulationKey(bytes.to_vec()))
+        let array: Array<u8, _> = Array::try_from(bytes)
+            .map_err(|_| PqPasetoError::CryptoError("Invalid key format".to_string()))?;
+        Ok(EncapsulationKey(
+            <MlKem768 as KemCore>::EncapsulationKey::from_bytes(&array),
+        ))
     }
 
     /// Export the decapsulation key as bytes
     pub fn decapsulation_key_to_bytes(&self) -> Vec<u8> {
-        self.decapsulation_key.0.clone()
+        use ml_kem::EncodedSizeUser;
+        self.decapsulation_key.0.as_bytes().to_vec()
     }
 
     /// Import decapsulation key from bytes
     pub fn decapsulation_key_from_bytes(bytes: &[u8]) -> Result<DecapsulationKey, PqPasetoError> {
-        // Basic length validation - ML-KEM-768 decapsulation key is 2400 bytes
+        use ml_kem::{EncodedSizeUser, array::Array};
         if bytes.len() != 2400 {
             return Err(PqPasetoError::CryptoError(
                 "Invalid decapsulation key length".to_string(),
             ));
         }
-        Ok(DecapsulationKey(bytes.to_vec()))
+        let array: Array<u8, _> = Array::try_from(bytes)
+            .map_err(|_| PqPasetoError::CryptoError("Invalid key format".to_string()))?;
+        Ok(DecapsulationKey(
+            <MlKem768 as KemCore>::DecapsulationKey::from_bytes(&array),
+        ))
     }
 
-    /// Perform key encapsulation (sender side)
-    ///
-    /// **Note**: This is currently a mock implementation for demonstration.
-    /// A full implementation would use actual ML-KEM-768 encapsulation.
-    pub fn encapsulate<R: CryptoRng + RngCore>(&self, rng: &mut R) -> (SymmetricKey, Vec<u8>) {
-        // For now, we'll use a simpler approach - just generate a random shared secret
-        // In a full implementation, this would use the actual ML-KEM encapsulation
-        let mut shared_secret = [0u8; 32];
-        rng.fill_bytes(&mut shared_secret);
-        let symmetric_key =
-            SymmetricKey::derive_from_shared_secret(&shared_secret, b"PASETO-PQ-LOCAL-v1");
+    /// Perform key encapsulation (sender side) using ML-KEM-768
+    pub fn encapsulate(&self) -> (SymmetricKey, Vec<u8>) {
+        // Use real ML-KEM-768 encapsulation with OsRng for compatibility
+        let (ciphertext, shared_secret) = self
+            .encapsulation_key
+            .0
+            .encapsulate(&mut chacha20poly1305::aead::OsRng)
+            .unwrap();
 
-        // Generate mock ciphertext for demonstration
-        let mut ciphertext = vec![0u8; 1088]; // ML-KEM-768 ciphertext size
-        rng.fill_bytes(&mut ciphertext);
+        let symmetric_key = SymmetricKey::derive_from_shared_secret(
+            shared_secret.as_slice(),
+            b"PASETO-PQ-LOCAL-v1",
+        );
 
-        (symmetric_key, ciphertext)
+        (symmetric_key, ciphertext.as_slice().to_vec())
     }
 
-    /// Perform key decapsulation (receiver side)
-    ///
-    /// **Note**: This is currently a mock implementation for demonstration.
-    /// A full implementation would use actual ML-KEM-768 decapsulation.
+    /// Perform key decapsulation (receiver side) using ML-KEM-768
     pub fn decapsulate(&self, ciphertext: &[u8]) -> Result<SymmetricKey, PqPasetoError> {
+        use ml_kem::array::Array;
+
+        // Parse ciphertext into the correct type
         if ciphertext.len() != 1088 {
             return Err(PqPasetoError::CryptoError(
                 "Invalid ciphertext length".to_string(),
             ));
         }
 
-        // For demonstration, derive a deterministic shared secret from the ciphertext
-        // In a real implementation, this would use actual ML-KEM decapsulation
-        let mut hasher = Sha3_256::new();
-        hasher.update(&self.decapsulation_key.0);
-        hasher.update(ciphertext);
-        let hash = hasher.finalize();
+        let ct_array: Array<u8, _> = Array::try_from(ciphertext)
+            .map_err(|_| PqPasetoError::CryptoError("Invalid ciphertext format".to_string()))?;
+        let ct = ml_kem::Ciphertext::<MlKem768>::from(ct_array);
 
-        let mut shared_secret = [0u8; 32];
-        shared_secret.copy_from_slice(&hash[..32]);
+        // Use real ML-KEM-768 decapsulation
+        let shared_secret = self.decapsulation_key.0.decapsulate(&ct).unwrap();
 
         Ok(SymmetricKey::derive_from_shared_secret(
-            &shared_secret,
+            shared_secret.as_ref(),
             b"PASETO-PQ-LOCAL-v1",
         ))
     }
@@ -2036,15 +2037,14 @@ mod tests {
         let _imported_enc = KemKeyPair::encapsulation_key_from_bytes(&enc_bytes).unwrap();
         let _imported_dec = KemKeyPair::decapsulation_key_from_bytes(&dec_bytes).unwrap();
 
-        // Test key encapsulation/decapsulation with mock implementation
-        let mut rng2 = rand::rng();
-        let (sender_key, ciphertext) = keypair.encapsulate(&mut rng2);
+        // Test key encapsulation/decapsulation with real ML-KEM implementation
+        let (sender_key, ciphertext) = keypair.encapsulate();
         let receiver_key = keypair.decapsulate(&ciphertext).unwrap();
 
-        // Note: Mock implementation doesn't produce identical keys - just verify they're different from zero
-        assert_ne!(sender_key.to_bytes(), [0u8; 32]);
-        assert_ne!(receiver_key.to_bytes(), [0u8; 32]);
-        assert_eq!(ciphertext.len(), 1088); // Verify ciphertext is correct size
+        // Real ML-KEM implementation should produce identical shared secrets
+        assert_eq!(sender_key.to_bytes(), receiver_key.to_bytes());
+        assert_ne!(sender_key.to_bytes(), [0u8; 32]); // Should not be all zeros
+        assert_eq!(ciphertext.len(), 1088); // ML-KEM-768 ciphertext size
     }
 
     #[test]

@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔄 Post-Quantum Key Exchange (ML-KEM-768):");
 
     let kem_encap_start = Instant::now();
-    let (shared_key_sender, ciphertext) = kem_keypair.encapsulate(&mut rng);
+    let (shared_key_sender, ciphertext) = kem_keypair.encapsulate();
     let kem_encap_time = kem_encap_start.elapsed();
     println!("   Encapsulate:  {:?}", kem_encap_time);
 
@@ -126,8 +126,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         shared_key_sender.to_bytes() == shared_key_receiver.to_bytes()
     );
 
-    // Note: Mock implementation - in real ML-KEM, both keys would be identical
-    println!("   Note: Mock KEM implementation - keys don't match in demo");
+    // Note: Real ML-KEM implementation - shared secrets match correctly
+    println!("   Note: Real ML-KEM-768 implementation - shared secrets match!");
 
     println!("\n📊 Performance Comparison:");
     println!("   Operation         | Public (ML-DSA) | Local (Symmetric) | Ratio");
