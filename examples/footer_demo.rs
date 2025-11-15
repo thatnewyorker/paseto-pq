@@ -389,11 +389,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📝 Token Format Examples:");
 
     println!("   Public token without footer (5 parts):");
-    println!("     paseto.v1.pq.<payload>.<signature>");
+    println!("     paseto.v1.public.<payload>.<signature>");
     println!("     Parts: {}", old_public.split('.').count());
 
     println!("   Public token with footer (6 parts):");
-    println!("     paseto.v1.pq.<payload>.<signature>.<footer>");
+    println!("     paseto.v1.public.<payload>.<signature>.<footer>");
     println!("     Parts: {}", public_token.split('.').count());
 
     println!("   Local token without footer (4 parts):");
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_footer_workflow() -> Result<(), Box<dyn std::error::Error>> {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         let keypair = KeyPair::generate(&mut rng);
 
         let mut claims = Claims::new();
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_footer_size_impact() -> Result<(), Box<dyn std::error::Error>> {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         let keypair = KeyPair::generate(&mut rng);
 
         let mut claims = Claims::new();

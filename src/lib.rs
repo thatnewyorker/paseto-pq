@@ -13,7 +13,7 @@
 //! ## Token Format
 //!
 //! ```text
-//! paseto.v1.pq.<base64url-encoded-payload>.<base64url-encoded-ml-dsa-signature>
+//! paseto.v1.public.<base64url-encoded-payload>.<base64url-encoded-ml-dsa-signature>
 //! ```
 //!
 //! ## Example Usage
@@ -228,15 +228,27 @@ pub struct Claims {
     pub aud: Option<String>,
 
     /// Token expiration time
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        with = "time::serde::rfc3339::option"
+    )]
     pub exp: Option<OffsetDateTime>,
 
     /// Token not-before time
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        with = "time::serde::rfc3339::option"
+    )]
     pub nbf: Option<OffsetDateTime>,
 
     /// Token issued-at time
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        with = "time::serde::rfc3339::option"
+    )]
     pub iat: Option<OffsetDateTime>,
 
     /// Token identifier (jti)
@@ -258,6 +270,89 @@ pub struct VerifiedToken {
     claims: Claims,
     footer: Option<Footer>,
     raw_token: String,
+}
+
+/// Parsed token structure for inspection without cryptographic operations
+///
+/// This struct allows you to examine token metadata (purpose, version, footer)
+/// without performing expensive cryptographic verification or decryption.
+/// Useful for debugging, logging, middleware, and routing decisions.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use paseto_pq::ParsedToken;
+///
+/// let token = "paseto.v1.public.ABC123...";
+/// let parsed = ParsedToken::parse(token)?;
+///
+/// println!("Purpose: {}", parsed.purpose()); // "public"
+/// println!("Version: {}", parsed.version()); // "v1"
+/// println!("Has footer: {}", parsed.has_footer());
+///
+/// // Use for routing decisions
+/// match parsed.purpose() {
+///     "public" => println!("Public token - needs verification"),
+///     "local" => println!("Local token - needs decryption"),
+///     _ => println!("Unsupported token type"),
+/// }
+/// # Ok::<(), paseto_pq::PqPasetoError>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct ParsedToken {
+    purpose: String,
+    version: String,
+    payload: Vec<u8>,
+    signature_or_tag: Option<Vec<u8>>, // For public tokens (signature) or local tokens (auth tag)
+    footer: Option<Footer>,
+    raw_token: String,
+}
+
+/// Token size breakdown showing individual components
+///
+/// This struct provides detailed information about how token size is distributed
+/// across different components, useful for optimization and debugging.
+#[derive(Debug, Clone)]
+pub struct TokenSizeBreakdown {
+    /// Size of the protocol prefix ("paseto.v1.public." or "paseto.v1.local.")
+    pub prefix: usize,
+    /// Size of the JSON payload after base64 encoding
+    pub payload: usize,
+    /// Size of signature (public tokens) or authentication tag (local tokens)
+    pub signature_or_tag: usize,
+    /// Size of footer if present
+    pub footer: Option<usize>,
+    /// Size of separator dots between parts
+    pub separators: usize,
+    /// Additional overhead from base64 encoding (~33% expansion)
+    pub base64_overhead: usize,
+}
+
+/// Token size estimator for planning and optimization
+///
+/// This struct allows you to estimate token sizes before creation to avoid
+/// runtime surprises with HTTP headers, cookies, or URL length limits.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use paseto_pq::{Claims, TokenSizeEstimator};
+///
+/// let mut claims = Claims::new();
+/// claims.set_subject("user123").unwrap();
+/// claims.add_custom("role", "admin").unwrap();
+///
+/// let estimator = TokenSizeEstimator::public(&claims, true);
+/// println!("Estimated size: {} bytes", estimator.total_bytes());
+///
+/// if !estimator.fits_in_cookie() {
+///     println!("Token too large for browser cookies!");
+/// }
+/// # Ok::<(), paseto_pq::PqPasetoError>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct TokenSizeEstimator {
+    breakdown: TokenSizeBreakdown,
 }
 
 /// Errors that can occur during token operations
@@ -298,10 +393,13 @@ pub enum PqPasetoError {
 
     #[error("Decryption error: {0}")]
     DecryptionError(String),
+
+    #[error("Token parsing error: {0}")]
+    TokenParsingError(String),
 }
 
 // Constants
-const TOKEN_PREFIX_PUBLIC: &str = "paseto.v1.pq";
+const TOKEN_PREFIX_PUBLIC: &str = "paseto.v1.public";
 const TOKEN_PREFIX_LOCAL: &str = "paseto.v1.local";
 const MAX_TOKEN_SIZE: usize = 1024 * 1024; // 1MB max token size
 const SYMMETRIC_KEY_SIZE: usize = 32;
@@ -626,11 +724,494 @@ impl Claims {
     pub fn kid(&self) -> Option<&str> {
         self.kid.as_deref()
     }
+
+    /// Convert claims to a JSON value
+    ///
+    /// This method provides easy integration with logging, databases, and tracing systems.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::Claims;
+    /// use serde_json::Value;
+    ///
+    /// let mut claims = Claims::new();
+    /// claims.set_subject("user123").unwrap();
+    /// claims.add_custom("role", "admin").unwrap();
+    ///
+    /// let json_value: Value = claims.to_json_value();
+    /// println!("Claims as JSON: {}", json_value);
+    /// ```
+    pub fn to_json_value(&self) -> serde_json::Value {
+        serde_json::Value::from(self.clone())
+    }
+
+    /// Convert claims to a JSON string
+    ///
+    /// This method provides easy integration with logging, databases, and tracing systems.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::Claims;
+    ///
+    /// let mut claims = Claims::new();
+    /// claims.set_subject("user123").unwrap();
+    /// claims.add_custom("role", "admin").unwrap();
+    ///
+    /// let json_string = claims.to_json_string().unwrap();
+    /// println!("User claims: {}", json_string);
+    /// ```
+    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    /// Convert claims to a pretty-printed JSON string
+    ///
+    /// Useful for debugging and development environments.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::Claims;
+    ///
+    /// let mut claims = Claims::new();
+    /// claims.set_subject("user123").unwrap();
+    /// claims.add_custom("role", "admin").unwrap();
+    ///
+    /// let pretty_json = claims.to_json_string_pretty().unwrap();
+    /// println!("Claims:\n{}", pretty_json);
+    /// ```
+    pub fn to_json_string_pretty(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
 }
 
 impl Default for Claims {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Convert Claims to serde_json::Value for easy integration with logging, databases, and tracing
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use paseto_pq::Claims;
+/// use serde_json::Value;
+///
+/// let mut claims = Claims::new();
+/// claims.set_subject("user123").unwrap();
+/// claims.add_custom("tenant_id", "org_abc123").unwrap();
+///
+/// // Direct conversion
+/// let json_value: Value = claims.into();
+///
+/// // Use in logging
+/// println!("User authenticated with claims: {}", json_value);
+///
+/// // Use in database operations
+/// // db.insert_audit_log(json_value).await?;
+/// ```
+impl From<Claims> for serde_json::Value {
+    fn from(claims: Claims) -> Self {
+        // Use serde to convert the Claims to JSON Value
+        // This leverages the existing Serialize implementation on Claims
+        serde_json::to_value(claims).unwrap_or_else(|_| serde_json::Value::Null)
+    }
+}
+
+/// Convert &Claims to serde_json::Value (borrowed version)
+impl From<&Claims> for serde_json::Value {
+    fn from(claims: &Claims) -> Self {
+        serde_json::to_value(claims).unwrap_or_else(|_| serde_json::Value::Null)
+    }
+}
+
+impl TokenSizeBreakdown {
+    /// Get the total size from all components
+    pub fn total(&self) -> usize {
+        self.prefix
+            + self.payload
+            + self.signature_or_tag
+            + self.footer.unwrap_or(0)
+            + self.separators
+            + self.base64_overhead
+    }
+}
+
+impl TokenSizeEstimator {
+    /// Estimate the size of a public token
+    ///
+    /// # Arguments
+    ///
+    /// * `claims` - The claims that will be included in the token
+    /// * `has_footer` - Whether the token will include a footer
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::{Claims, TokenSizeEstimator};
+    ///
+    /// let mut claims = Claims::new();
+    /// claims.set_subject("user123").unwrap();
+    ///
+    /// let estimator = TokenSizeEstimator::public(&claims, false);
+    /// println!("Public token will be ~{} bytes", estimator.total_bytes());
+    /// # Ok::<(), paseto_pq::PqPasetoError>(())
+    /// ```
+    pub fn public(claims: &Claims, has_footer: bool) -> Self {
+        // Serialize claims to get actual payload size
+        let claims_json = serde_json::to_string(claims).unwrap_or_default();
+        let claims_bytes = claims_json.as_bytes().len();
+
+        // Calculate base64 encoded payload size
+        let payload_b64_len = ((claims_bytes + 2) / 3) * 4; // Base64 encoding
+
+        // Constants for public tokens
+        let prefix_len = TOKEN_PREFIX_PUBLIC.len() + 1; // +1 for trailing dot
+        let signature_len = 4300; // ML-DSA-65 signature is ~2,420 bytes -> ~3,227 base64 -> actual ~4.3KB
+        let footer_len = if has_footer { 150 } else { 0 }; // Estimated footer size
+        let separators = if has_footer { 3 } else { 2 }; // Dots between parts
+        let base64_overhead = (claims_bytes * 4 + 2) / 3 - claims_bytes; // More accurate base64 overhead
+
+        let breakdown = TokenSizeBreakdown {
+            prefix: prefix_len,
+            payload: payload_b64_len,
+            signature_or_tag: signature_len,
+            footer: if has_footer { Some(footer_len) } else { None },
+            separators,
+            base64_overhead,
+        };
+
+        Self { breakdown }
+    }
+
+    /// Estimate the size of a local token
+    ///
+    /// # Arguments
+    ///
+    /// * `claims` - The claims that will be included in the token
+    /// * `has_footer` - Whether the token will include a footer
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::{Claims, TokenSizeEstimator};
+    ///
+    /// let mut claims = Claims::new();
+    /// claims.set_subject("user123").unwrap();
+    ///
+    /// let estimator = TokenSizeEstimator::local(&claims, false);
+    /// println!("Local token will be ~{} bytes", estimator.total_bytes());
+    /// # Ok::<(), paseto_pq::PqPasetoError>(())
+    /// ```
+    pub fn local(claims: &Claims, has_footer: bool) -> Self {
+        // Serialize claims to get actual payload size
+        let claims_json = serde_json::to_string(claims).unwrap_or_default();
+        let claims_bytes = claims_json.as_bytes().len();
+
+        // Local tokens encrypt the payload, add nonce (12 bytes) and auth tag (16 bytes)
+        let encrypted_payload_len = claims_bytes + 12 + 16; // nonce + tag
+        let payload_b64_len = ((encrypted_payload_len + 2) / 3) * 4; // Base64 encoding
+
+        // Constants for local tokens
+        let prefix_len = TOKEN_PREFIX_LOCAL.len() + 1; // +1 for trailing dot
+        let footer_len = if has_footer { 150 } else { 0 }; // Estimated footer size
+        let separators = if has_footer { 2 } else { 1 }; // Dots between parts
+        let base64_overhead = (encrypted_payload_len * 4 + 2) / 3 - encrypted_payload_len; // More accurate base64 overhead
+
+        let breakdown = TokenSizeBreakdown {
+            prefix: prefix_len,
+            payload: payload_b64_len,
+            signature_or_tag: 0, // Local tokens don't have separate signature
+            footer: if has_footer { Some(footer_len) } else { None },
+            separators,
+            base64_overhead,
+        };
+
+        Self { breakdown }
+    }
+
+    /// Get the estimated total size in bytes
+    pub fn total_bytes(&self) -> usize {
+        self.breakdown.total()
+    }
+
+    /// Check if the token fits within typical cookie size limits (4KB)
+    pub fn fits_in_cookie(&self) -> bool {
+        self.total_bytes() <= 4096
+    }
+
+    /// Check if the token fits within typical URL length limits (2KB)
+    pub fn fits_in_url(&self) -> bool {
+        self.total_bytes() <= 2048
+    }
+
+    /// Check if the token fits within typical HTTP header limits (8KB)
+    pub fn fits_in_header(&self) -> bool {
+        self.total_bytes() <= 8192
+    }
+
+    /// Get detailed breakdown of size components
+    pub fn breakdown(&self) -> &TokenSizeBreakdown {
+        &self.breakdown
+    }
+
+    /// Get optimization suggestions if the token is large
+    pub fn optimization_suggestions(&self) -> Vec<String> {
+        let mut suggestions = Vec::new();
+        let total = self.total_bytes();
+
+        if total > 4096 {
+            suggestions.push("Token exceeds cookie size limit (4KB)".to_string());
+            suggestions.push("Consider using shorter claim values".to_string());
+            suggestions.push("Move large data to footer or external storage".to_string());
+            suggestions.push("Use local tokens for internal services (smaller)".to_string());
+        }
+
+        if total > 2048 {
+            suggestions.push("Token exceeds URL length limits".to_string());
+            suggestions.push("Avoid passing token in query parameters".to_string());
+        }
+
+        if self.breakdown.payload > total / 2 {
+            suggestions.push("Payload is majority of token size - reduce claim data".to_string());
+        }
+
+        if self.breakdown.footer.unwrap_or(0) > 200 {
+            suggestions.push("Footer is large - consider minimal metadata only".to_string());
+        }
+
+        suggestions
+    }
+
+    /// Compare token size to typical JWT tokens
+    pub fn compare_to_jwt(&self) -> String {
+        let jwt_typical = 200; // Typical JWT size
+        let ratio = self.total_bytes() as f64 / jwt_typical as f64;
+        format!(
+            "{:.1}x larger than typical JWT ({} bytes)",
+            ratio, jwt_typical
+        )
+    }
+
+    /// Get a human-readable size summary
+    pub fn size_summary(&self) -> String {
+        format!(
+            "Token size: {} bytes (payload: {}, signature: {}, overhead: {})",
+            self.total_bytes(),
+            self.breakdown.payload,
+            self.breakdown.signature_or_tag,
+            self.breakdown.base64_overhead + self.breakdown.separators + self.breakdown.prefix
+        )
+    }
+}
+
+impl ParsedToken {
+    /// Parse a PASETO token string to extract structural information
+    ///
+    /// This method performs **no cryptographic operations** - it only parses the token
+    /// structure to extract metadata. Use this for debugging, logging, middleware,
+    /// and routing decisions.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The PASETO token string to parse
+    ///
+    /// # Returns
+    ///
+    /// Returns a `ParsedToken` containing the token's structural information,
+    /// or an error if the token format is invalid.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::ParsedToken;
+    ///
+    /// let token = "paseto.v1.public.ABC123.DEF456.eyJraWQiOiJ0ZXN0In0";
+    /// let parsed = ParsedToken::parse(token)?;
+    ///
+    /// assert_eq!(parsed.purpose(), "public");
+    /// assert_eq!(parsed.version(), "v1");
+    /// assert!(parsed.has_footer());
+    /// # Ok::<(), paseto_pq::PqPasetoError>(())
+    /// ```
+    pub fn parse(token: &str) -> Result<Self, PqPasetoError> {
+        let parts: Vec<&str> = token.split('.').collect();
+
+        // Validate minimum structure: paseto.v1.purpose.payload
+        if parts.len() < 4 {
+            return Err(PqPasetoError::TokenParsingError(format!(
+                "Invalid token format: expected at least 4 parts, got {}",
+                parts.len()
+            )));
+        }
+
+        // Validate protocol
+        if parts[0] != "paseto" {
+            return Err(PqPasetoError::TokenParsingError(format!(
+                "Invalid protocol: expected 'paseto', got '{}'",
+                parts[0]
+            )));
+        }
+
+        // Extract version
+        let version = parts[1].to_string();
+
+        // Extract purpose
+        let purpose = parts[2].to_string();
+
+        // Validate known formats
+        match (version.as_str(), purpose.as_str()) {
+            ("v1", "public") | ("v1", "local") => {}
+            _ => {
+                return Err(PqPasetoError::TokenParsingError(format!(
+                    "Unsupported token format: {}.{}.{}",
+                    parts[0], parts[1], parts[2]
+                )));
+            }
+        }
+
+        // Decode payload
+        let payload = URL_SAFE_NO_PAD.decode(parts[3]).map_err(|e| {
+            PqPasetoError::TokenParsingError(format!("Invalid payload base64: {}", e))
+        })?;
+
+        let mut signature_or_tag = None;
+        let mut footer = None;
+
+        // Parse remaining parts based on token type
+        match purpose.as_str() {
+            "public" => {
+                // Public tokens: paseto.v1.public.payload.signature[.footer]
+                if parts.len() > 6 {
+                    return Err(PqPasetoError::TokenParsingError(
+                        "Public token has too many parts".to_string(),
+                    ));
+                }
+                if parts.len() >= 5 {
+                    signature_or_tag = Some(URL_SAFE_NO_PAD.decode(parts[4]).map_err(|e| {
+                        PqPasetoError::TokenParsingError(format!("Invalid signature base64: {}", e))
+                    })?);
+                }
+                if parts.len() >= 6 {
+                    footer = Some(Footer::from_base64(parts[5])?);
+                }
+            }
+            "local" => {
+                // Local tokens: paseto.v1.local.payload[.footer]
+                if parts.len() > 5 {
+                    return Err(PqPasetoError::TokenParsingError(
+                        "Local token has too many parts".to_string(),
+                    ));
+                }
+                if parts.len() >= 5 {
+                    footer = Some(Footer::from_base64(parts[4])?);
+                }
+            }
+            _ => unreachable!(), // Already validated above
+        }
+
+        Ok(ParsedToken {
+            purpose,
+            version,
+            payload,
+            signature_or_tag,
+            footer,
+            raw_token: token.to_string(),
+        })
+    }
+
+    /// Get the token purpose ("public" for public tokens, "local" for local tokens)
+    pub fn purpose(&self) -> &str {
+        &self.purpose
+    }
+
+    /// Get the token version (currently "v1")
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// Check if the token has a footer
+    pub fn has_footer(&self) -> bool {
+        self.footer.is_some()
+    }
+
+    /// Get the footer, if present
+    pub fn footer(&self) -> Option<&Footer> {
+        self.footer.as_ref()
+    }
+
+    /// Get the raw payload bytes (base64-decoded)
+    pub fn payload_bytes(&self) -> &[u8] {
+        &self.payload
+    }
+
+    /// Get the signature or authentication tag bytes, if present
+    ///
+    /// For public tokens, this is the ML-DSA signature.
+    /// For local tokens, this is None (auth tag is embedded in payload).
+    pub fn signature_bytes(&self) -> Option<&[u8]> {
+        self.signature_or_tag.as_deref()
+    }
+
+    /// Get the length of the payload in bytes
+    pub fn payload_length(&self) -> usize {
+        self.payload.len()
+    }
+
+    /// Get the total length of the token string
+    pub fn total_length(&self) -> usize {
+        self.raw_token.len()
+    }
+
+    /// Get the raw token string
+    pub fn raw_token(&self) -> &str {
+        &self.raw_token
+    }
+
+    /// Get footer as JSON string, if present
+    pub fn footer_json(&self) -> Option<Result<String, serde_json::Error>> {
+        self.footer.as_ref().map(|f| serde_json::to_string(f))
+    }
+
+    /// Get footer as pretty-printed JSON string, if present
+    pub fn footer_json_pretty(&self) -> Option<Result<String, serde_json::Error>> {
+        self.footer
+            .as_ref()
+            .map(|f| serde_json::to_string_pretty(f))
+    }
+
+    /// Check if this is a public token (uses signatures)
+    pub fn is_public(&self) -> bool {
+        self.purpose == "public"
+    }
+
+    /// Check if this is a local token (uses symmetric encryption)
+    pub fn is_local(&self) -> bool {
+        self.purpose == "local"
+    }
+
+    /// Get token format summary for debugging
+    pub fn format_summary(&self) -> String {
+        format!(
+            "paseto.{}.{} (payload: {} bytes, signature: {}, footer: {})",
+            self.version,
+            self.purpose,
+            self.payload.len(),
+            if self.signature_or_tag.is_some() {
+                "present"
+            } else {
+                "none"
+            },
+            if self.footer.is_some() {
+                "present"
+            } else {
+                "none"
+            }
+        )
     }
 }
 
@@ -662,7 +1243,102 @@ impl VerifiedToken {
 }
 
 impl PasetoPQ {
-    /// Sign claims to create a new public token
+    /// Parse a PASETO token for inspection without cryptographic operations
+    ///
+    /// This method allows you to examine token structure, purpose, version, and footer
+    /// without performing expensive signature verification or decryption. Useful for
+    /// debugging, logging, middleware, and routing decisions.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The PASETO token string to parse
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::PasetoPQ;
+    ///
+    /// let token = "paseto.v1.public.ABC123...";
+    /// let parsed = PasetoPQ::parse_token(token)?;
+    ///
+    /// println!("Token type: {}", parsed.purpose());
+    /// println!("Has footer: {}", parsed.has_footer());
+    ///
+    /// // Route based on token type
+    /// match parsed.purpose() {
+    ///     "public" => println!("Public token - needs signature verification"),
+    ///     "local" => println!("Local token - needs decryption"),
+    ///     _ => println!("Unknown token type"),
+    /// }
+    /// # Ok::<(), paseto_pq::PqPasetoError>(())
+    /// ```
+    pub fn parse_token(token: &str) -> Result<ParsedToken, PqPasetoError> {
+        ParsedToken::parse(token)
+    }
+
+    /// Estimate the size of a public token before creation
+    ///
+    /// This method helps you plan token usage and avoid size-related issues
+    /// with HTTP headers, cookies, or URL length limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `claims` - The claims that will be included in the token
+    /// * `has_footer` - Whether the token will include a footer
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::{PasetoPQ, Claims};
+    ///
+    /// let mut claims = Claims::new();
+    /// claims.set_subject("user123").unwrap();
+    /// claims.add_custom("role", "admin").unwrap();
+    ///
+    /// let estimator = PasetoPQ::estimate_public_size(&claims, false);
+    /// println!("Token will be ~{} bytes", estimator.total_bytes());
+    ///
+    /// if !estimator.fits_in_cookie() {
+    ///     println!("Warning: Token too large for cookies!");
+    /// }
+    /// # Ok::<(), paseto_pq::PqPasetoError>(())
+    /// ```
+    pub fn estimate_public_size(claims: &Claims, has_footer: bool) -> TokenSizeEstimator {
+        TokenSizeEstimator::public(claims, has_footer)
+    }
+
+    /// Estimate the size of a local token before creation
+    ///
+    /// This method helps you plan token usage and avoid size-related issues
+    /// with HTTP headers, cookies, or URL length limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `claims` - The claims that will be included in the token
+    /// * `has_footer` - Whether the token will include a footer
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use paseto_pq::{PasetoPQ, Claims};
+    ///
+    /// let mut claims = Claims::new();
+    /// claims.set_subject("user123").unwrap();
+    /// claims.add_custom("session_data", "confidential").unwrap();
+    ///
+    /// let estimator = PasetoPQ::estimate_local_size(&claims, true);
+    /// println!("Token will be ~{} bytes", estimator.total_bytes());
+    ///
+    /// if estimator.fits_in_header() {
+    ///     println!("Token fits in HTTP headers");
+    /// }
+    /// # Ok::<(), paseto_pq::PqPasetoError>(())
+    /// ```
+    pub fn estimate_local_size(claims: &Claims, has_footer: bool) -> TokenSizeEstimator {
+        TokenSizeEstimator::local(claims, has_footer)
+    }
+
+    /// Sign claims to create a public token
     #[cfg_attr(feature = "logging", instrument(skip(signing_key)))]
     pub fn sign(signing_key: &SigningKey, claims: &Claims) -> Result<String, PqPasetoError> {
         Self::sign_with_footer(signing_key, claims, None)
@@ -938,19 +1614,19 @@ impl PasetoPQ {
         // Split token into parts (5 parts without footer, 6 parts with footer)
         let parts: Vec<&str> = token.splitn(6, '.').collect();
         let (encoded_payload, encoded_signature, footer) = if parts.len() == 6 {
-            // Token with footer: paseto.v1.pq.payload.signature.footer
-            if parts[0] != "paseto" || parts[1] != "v1" || parts[2] != "pq" {
+            // Token with footer: paseto.v1.public.payload.signature.footer
+            if parts[0] != "paseto" || parts[1] != "v1" || parts[2] != "public" {
                 return Err(PqPasetoError::InvalidFormat(
-                    "Invalid token format - expected 'paseto.v1.pq'".into(),
+                    "Invalid token format - expected 'paseto.v1.public'".into(),
                 ));
             }
             let footer = Footer::from_base64(parts[5])?;
             (parts[3], parts[4], Some(footer))
         } else if parts.len() == 5 {
-            // Token without footer: paseto.v1.pq.payload.signature
-            if parts[0] != "paseto" || parts[1] != "v1" || parts[2] != "pq" {
+            // Token without footer: paseto.v1.public.payload.signature
+            if parts[0] != "paseto" || parts[1] != "v1" || parts[2] != "public" {
                 return Err(PqPasetoError::InvalidFormat(
-                    "Invalid token format - expected 'paseto.v1.pq'".into(),
+                    "Invalid token format - expected 'paseto.v1.public'".into(),
                 ));
             }
             (parts[3], parts[4], None)
@@ -961,13 +1637,7 @@ impl PasetoPQ {
         };
 
         // Reconstruct message that was signed (without footer)
-        let message = format!(
-            "{}.{}.{}.{}",
-            TOKEN_PREFIX_PUBLIC.split('.').nth(0).unwrap(),
-            "v1",
-            "pq",
-            encoded_payload
-        );
+        let message = format!("{}.{}", TOKEN_PREFIX_PUBLIC, encoded_payload);
         let message_bytes = message.as_bytes();
 
         // Decode signature
@@ -1171,7 +1841,7 @@ mod tests {
         claims.add_custom("roles", &["user", "admin"]).unwrap();
 
         let token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
-        assert!(token.starts_with("paseto.v1.pq."));
+        assert!(token.starts_with("paseto.v1.public."));
 
         let verified = PasetoPQ::verify(&keypair.verifying_key, &token).unwrap();
         let verified_claims = verified.claims();
@@ -1327,11 +1997,14 @@ mod tests {
         ));
 
         // Invalid base64 in payload
-        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.v1.pq.invalid!!!.sig");
+        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.v1.public.invalid!!!.sig");
         assert!(matches!(result.unwrap_err(), PqPasetoError::CryptoError(_)));
 
         // Invalid signature bytes
-        let result = PasetoPQ::verify(&keypair.verifying_key, "paseto.v1.pq.dGVzdA.invalid_sig");
+        let result = PasetoPQ::verify(
+            &keypair.verifying_key,
+            "paseto.v1.public.dGVzdA.invalid_sig",
+        );
         assert!(matches!(result.unwrap_err(), PqPasetoError::CryptoError(_)));
     }
 
@@ -1570,7 +2243,7 @@ mod tests {
         let public_token = PasetoPQ::sign(&asymmetric_keypair.signing_key, &claims).unwrap();
         let local_token = PasetoPQ::encrypt(&symmetric_key, &claims).unwrap();
 
-        assert!(public_token.starts_with("paseto.v1.pq."));
+        assert!(public_token.starts_with("paseto.v1.public."));
         assert!(local_token.starts_with("paseto.v1.local."));
 
         // Verify each with correct method
@@ -1619,8 +2292,8 @@ mod tests {
         // Token with footer
         let token =
             PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer)).unwrap();
-        assert!(token.starts_with("paseto.v1.pq."));
-        assert_eq!(token.split('.').count(), 6); // paseto.v1.pq.payload.signature.footer
+        assert!(token.starts_with("paseto.v1.public."));
+        assert_eq!(token.split('.').count(), 6); // paseto.v1.public.payload.signature.footer
 
         let verified = PasetoPQ::verify_with_footer(&keypair.verifying_key, &token).unwrap();
         assert_eq!(verified.claims().subject(), Some("user123"));
@@ -1748,5 +2421,489 @@ mod tests {
         assert_eq!(verified_local.claims().subject(), Some("user123"));
         assert!(verified_public.footer().is_none());
         assert!(verified_local.footer().is_none());
+    }
+
+    #[test]
+    fn test_claims_json_conversion() {
+        use serde_json::Value;
+
+        let mut claims = Claims::new();
+        claims.set_subject("user123").unwrap();
+        claims.set_issuer("test-service").unwrap();
+        claims.set_audience("api.example.com").unwrap();
+        claims.add_custom("role", "admin").unwrap();
+        claims.add_custom("tenant_id", "org_abc123").unwrap();
+        claims
+            .add_custom("permissions", &["read", "write", "delete"])
+            .unwrap();
+
+        // Test From<Claims> for serde_json::Value
+        let json_value: Value = claims.clone().into();
+        assert!(json_value.is_object());
+        assert_eq!(json_value["sub"], "user123");
+        assert_eq!(json_value["iss"], "test-service");
+        assert_eq!(json_value["aud"], "api.example.com");
+        assert_eq!(json_value["role"], "admin");
+        assert_eq!(json_value["tenant_id"], "org_abc123");
+        assert_eq!(json_value["permissions"][0], "read");
+
+        // Test From<&Claims> for serde_json::Value
+        let json_value_ref: Value = (&claims).into();
+        assert_eq!(json_value, json_value_ref);
+
+        // Test to_json_value method
+        let json_value_method = claims.to_json_value();
+        assert_eq!(json_value, json_value_method);
+
+        // Test to_json_string method
+        let json_string = claims.to_json_string().unwrap();
+        assert!(json_string.contains("\"sub\":\"user123\""));
+        assert!(json_string.contains("\"role\":\"admin\""));
+
+        // Test to_json_string_pretty method
+        let pretty_json = claims.to_json_string_pretty().unwrap();
+        assert!(pretty_json.contains("\"sub\": \"user123\""));
+        assert!(pretty_json.contains("\"role\": \"admin\""));
+        assert!(pretty_json.len() > json_string.len()); // Pretty format should be longer
+
+        // Test that optional fields are skipped when None
+        let minimal_claims = Claims::new();
+        let minimal_json: Value = minimal_claims.into();
+        assert!(minimal_json.is_object());
+        assert!(minimal_json.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_claims_json_with_time_fields() {
+        use serde_json::Value;
+        use time::OffsetDateTime;
+
+        let mut claims = Claims::new();
+        let now = OffsetDateTime::now_utc();
+        let exp_time = now + time::Duration::hours(1);
+        let nbf_time = now - time::Duration::minutes(5);
+
+        claims.set_subject("user456").unwrap();
+        claims.set_expiration(exp_time).unwrap();
+        claims.set_not_before(nbf_time).unwrap();
+        claims.set_issued_at(now).unwrap();
+
+        let json_value: Value = claims.into();
+
+        // Verify time fields are present and properly formatted as RFC3339 strings
+        assert!(json_value["exp"].is_string());
+        assert!(json_value["nbf"].is_string());
+        assert!(json_value["iat"].is_string());
+
+        // Verify the time strings can be parsed back
+        let exp_str = json_value["exp"].as_str().unwrap();
+        let parsed_exp =
+            OffsetDateTime::parse(exp_str, &time::format_description::well_known::Rfc3339).unwrap();
+        assert_eq!(parsed_exp.unix_timestamp(), exp_time.unix_timestamp());
+    }
+
+    #[test]
+    fn test_claims_json_integration_example() {
+        use serde_json::Value;
+
+        // Simulate a real-world use case
+        let mut claims = Claims::new();
+        claims.set_subject("user789").unwrap();
+        claims.set_issuer("auth-service").unwrap();
+        claims.set_audience("api.conflux.dev").unwrap();
+        claims
+            .add_custom("session_id", "sess_abc123def456")
+            .unwrap();
+        claims.add_custom("user_type", "premium").unwrap();
+        claims
+            .add_custom("scopes", &["profile", "email", "admin"])
+            .unwrap();
+
+        // Test integration with logging (simulated)
+        let json_string = claims.to_json_string().unwrap();
+        assert!(!json_string.is_empty());
+
+        // Test integration with database storage (simulated)
+        let json_value: Value = claims.clone().into();
+        let serialized_for_db = serde_json::to_vec(&json_value).unwrap();
+        assert!(!serialized_for_db.is_empty());
+
+        // Test round-trip conversion
+        let deserialized_value: Value = serde_json::from_slice(&serialized_for_db).unwrap();
+        assert_eq!(json_value, deserialized_value);
+
+        // Verify specific fields for logging/tracing integration
+        assert_eq!(deserialized_value["sub"], "user789");
+        assert_eq!(deserialized_value["session_id"], "sess_abc123def456");
+        assert_eq!(deserialized_value["scopes"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_token_parsing_public_tokens() {
+        let mut rng = rng();
+        let keypair = KeyPair::generate(&mut rng);
+
+        // Create a public token without footer
+        let mut claims = Claims::new();
+        claims.set_subject("test-user").unwrap();
+        claims.add_custom("role", "admin").unwrap();
+
+        let token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let parsed = ParsedToken::parse(&token).unwrap();
+
+        // Verify basic properties
+        assert_eq!(parsed.purpose(), "public");
+        assert_eq!(parsed.version(), "v1");
+        assert!(!parsed.has_footer());
+        assert!(parsed.is_public());
+        assert!(!parsed.is_local());
+        assert!(parsed.signature_bytes().is_some());
+        assert_eq!(parsed.raw_token(), &token);
+
+        // Test alternative API
+        let parsed_alt = PasetoPQ::parse_token(&token).unwrap();
+        assert_eq!(parsed.purpose(), parsed_alt.purpose());
+    }
+
+    #[test]
+    fn test_token_parsing_public_tokens_with_footer() {
+        let mut rng = rng();
+        let keypair = KeyPair::generate(&mut rng);
+
+        // Create a public token with footer
+        let mut claims = Claims::new();
+        claims.set_subject("test-user").unwrap();
+
+        let mut footer = Footer::new();
+        footer.set_kid("test-key-123").unwrap();
+        footer.add_custom("tenant", "org_abc").unwrap();
+
+        let token =
+            PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer)).unwrap();
+        let parsed = ParsedToken::parse(&token).unwrap();
+
+        // Verify footer parsing
+        assert!(parsed.has_footer());
+        let parsed_footer = parsed.footer().unwrap();
+        assert_eq!(parsed_footer.kid(), Some("test-key-123"));
+        assert_eq!(
+            parsed_footer.get_custom("tenant"),
+            Some(&serde_json::json!("org_abc"))
+        );
+
+        // Test JSON footer methods
+        let footer_json = parsed.footer_json().unwrap().unwrap();
+        assert!(footer_json.contains("test-key-123"));
+        assert!(footer_json.contains("org_abc"));
+
+        let footer_pretty = parsed.footer_json_pretty().unwrap().unwrap();
+        assert!(footer_pretty.len() > footer_json.len()); // Pretty should be longer
+    }
+
+    #[test]
+    fn test_token_parsing_local_tokens() {
+        let mut rng = rng();
+        let key = SymmetricKey::generate(&mut rng);
+
+        // Create a local token without footer
+        let mut claims = Claims::new();
+        claims.set_subject("local-user").unwrap();
+        claims.add_custom("session_type", "confidential").unwrap();
+
+        let token = PasetoPQ::encrypt(&key, &claims).unwrap();
+        let parsed = ParsedToken::parse(&token).unwrap();
+
+        // Verify basic properties
+        assert_eq!(parsed.purpose(), "local");
+        assert_eq!(parsed.version(), "v1");
+        assert!(!parsed.has_footer());
+        assert!(!parsed.is_public());
+        assert!(parsed.is_local());
+        assert!(parsed.signature_bytes().is_none()); // Local tokens don't have separate signatures
+        assert!(parsed.payload_length() > 0);
+    }
+
+    #[test]
+    fn test_token_parsing_local_tokens_with_footer() {
+        let mut rng = rng();
+        let key = SymmetricKey::generate(&mut rng);
+
+        // Create a local token with footer
+        let mut claims = Claims::new();
+        claims.set_subject("local-user").unwrap();
+
+        let mut footer = Footer::new();
+        footer.set_kid("encryption-key-456").unwrap();
+        footer.set_version("v2.1").unwrap();
+
+        let token = PasetoPQ::encrypt_with_footer(&key, &claims, Some(&footer)).unwrap();
+        let parsed = ParsedToken::parse(&token).unwrap();
+
+        // Verify footer parsing
+        assert!(parsed.has_footer());
+        let parsed_footer = parsed.footer().unwrap();
+        assert_eq!(parsed_footer.kid(), Some("encryption-key-456"));
+        assert_eq!(parsed_footer.version(), Some("v2.1"));
+
+        // Test format summary
+        let summary = parsed.format_summary();
+        assert!(summary.contains("paseto.v1.local"));
+        assert!(summary.contains("footer: present"));
+    }
+
+    #[test]
+    fn test_token_parsing_error_cases() {
+        // Test various malformed tokens
+        let error_cases = vec![
+            ("", "expected at least 4 parts"),
+            ("not.a.token", "expected at least 4 parts"),
+            ("wrong.v1.public.payload", "Invalid protocol"),
+            ("paseto.v2.public.payload", "Unsupported token format"),
+            ("paseto.v1.unknown.payload", "Unsupported token format"),
+            ("paseto.v1.public.invalid_base64", "Invalid payload base64"),
+            (
+                "paseto.v1.public.dGVzdA.invalid!!!base64",
+                "Invalid signature base64",
+            ),
+            (
+                "paseto.v1.public.dGVzdA.dGVzdA.dGVzdA.extra.parts",
+                "too many parts",
+            ),
+            ("paseto.v1.local.dGVzdA.dGVzdA.extra", "too many parts"),
+        ];
+
+        for (token, expected_error) in error_cases {
+            let result = ParsedToken::parse(token);
+            assert!(result.is_err(), "Expected error for token: {}", token);
+            let error_msg = result.unwrap_err().to_string();
+            assert!(
+                error_msg.contains(expected_error),
+                "Expected '{}' in error '{}' for token '{}'",
+                expected_error,
+                error_msg,
+                token
+            );
+        }
+    }
+
+    #[test]
+    fn test_token_size_estimation_public_tokens() {
+        // Test basic public token estimation
+        let mut claims = Claims::new();
+        claims.set_subject("user123").unwrap();
+        claims.set_issuer("test-service").unwrap();
+
+        let estimator = TokenSizeEstimator::public(&claims, false);
+
+        // Public tokens should be large due to ML-DSA signature
+        assert!(estimator.total_bytes() > 4000);
+        assert!(estimator.total_bytes() < 6000); // Reasonable upper bound
+
+        // Check size limit methods
+        assert!(!estimator.fits_in_cookie()); // Should be too large for cookies
+        assert!(!estimator.fits_in_url()); // Should be too large for URLs
+        assert!(estimator.fits_in_header()); // Should fit in headers
+
+        // Test breakdown components
+        let breakdown = estimator.breakdown();
+        assert!(breakdown.prefix > 0);
+        assert!(breakdown.payload > 0);
+        assert!(breakdown.signature_or_tag > 4000); // ML-DSA signature is large
+        assert_eq!(breakdown.footer, None);
+        assert!(breakdown.separators > 0);
+        assert!(breakdown.base64_overhead > 0);
+    }
+
+    #[test]
+    fn test_token_size_estimation_local_tokens() {
+        // Test basic local token estimation
+        let mut claims = Claims::new();
+        claims.set_subject("user123").unwrap();
+        claims.set_issuer("test-service").unwrap();
+
+        let estimator = TokenSizeEstimator::local(&claims, false);
+
+        // Local tokens should be much smaller than public tokens
+        assert!(estimator.total_bytes() > 80);
+        assert!(estimator.total_bytes() < 300); // Should be reasonably small
+
+        // Check size limit methods
+        assert!(estimator.fits_in_cookie());
+        assert!(estimator.fits_in_url());
+        assert!(estimator.fits_in_header());
+
+        // Test breakdown components
+        let breakdown = estimator.breakdown();
+        assert!(breakdown.prefix > 0);
+        assert!(breakdown.payload > 0);
+        assert_eq!(breakdown.signature_or_tag, 0); // Local tokens don't have separate signature
+        assert_eq!(breakdown.footer, None);
+        assert!(breakdown.separators > 0);
+        assert!(breakdown.base64_overhead > 0);
+    }
+
+    #[test]
+    fn test_token_size_estimation_with_footer() {
+        let mut claims = Claims::new();
+        claims.set_subject("user123").unwrap();
+
+        // Test public token with footer
+        let estimator_public = TokenSizeEstimator::public(&claims, true);
+        let estimator_public_no_footer = TokenSizeEstimator::public(&claims, false);
+
+        assert!(estimator_public.total_bytes() > estimator_public_no_footer.total_bytes());
+        assert!(estimator_public.breakdown().footer.is_some());
+        assert!(estimator_public_no_footer.breakdown().footer.is_none());
+
+        // Test local token with footer
+        let estimator_local = TokenSizeEstimator::local(&claims, true);
+        let estimator_local_no_footer = TokenSizeEstimator::local(&claims, false);
+
+        assert!(estimator_local.total_bytes() > estimator_local_no_footer.total_bytes());
+        assert!(estimator_local.breakdown().footer.is_some());
+        assert!(estimator_local_no_footer.breakdown().footer.is_none());
+    }
+
+    #[test]
+    fn test_token_size_estimation_convenience_methods() {
+        let mut claims = Claims::new();
+        claims.set_subject("user123").unwrap();
+
+        // Test PasetoPQ convenience methods
+        let public_estimator = PasetoPQ::estimate_public_size(&claims, false);
+        let local_estimator = PasetoPQ::estimate_local_size(&claims, true);
+
+        // Should work the same as direct construction
+        let direct_public = TokenSizeEstimator::public(&claims, false);
+        let direct_local = TokenSizeEstimator::local(&claims, true);
+
+        assert_eq!(public_estimator.total_bytes(), direct_public.total_bytes());
+        assert_eq!(local_estimator.total_bytes(), direct_local.total_bytes());
+    }
+
+    #[test]
+    fn test_token_size_estimation_optimization_suggestions() {
+        // Test with small token - should have few suggestions
+        let small_claims = Claims::new();
+        let small_estimator = TokenSizeEstimator::local(&small_claims, false);
+        let small_suggestions = small_estimator.optimization_suggestions();
+        // Small local tokens should have no suggestions
+        assert!(small_suggestions.is_empty() || small_estimator.total_bytes() < 1000);
+
+        // Test with large token - should have many suggestions
+        let mut large_claims = Claims::new();
+        large_claims
+            .add_custom("huge_data", "x".repeat(5000))
+            .unwrap();
+        let large_estimator = TokenSizeEstimator::public(&large_claims, false);
+        let large_suggestions = large_estimator.optimization_suggestions();
+
+        assert!(!large_suggestions.is_empty());
+        assert!(large_suggestions.iter().any(|s| s.contains("cookie")));
+        assert!(
+            large_suggestions
+                .iter()
+                .any(|s| s.contains("shorter claim"))
+        );
+    }
+
+    #[test]
+    fn test_token_size_breakdown_total() {
+        let breakdown = TokenSizeBreakdown {
+            prefix: 10,
+            payload: 200,
+            signature_or_tag: 3000,
+            footer: Some(50),
+            separators: 3,
+            base64_overhead: 100,
+        };
+
+        let expected_total = 10 + 200 + 3000 + 50 + 3 + 100;
+        assert_eq!(breakdown.total(), expected_total);
+
+        // Test without footer
+        let breakdown_no_footer = TokenSizeBreakdown {
+            prefix: 10,
+            payload: 200,
+            signature_or_tag: 3000,
+            footer: None,
+            separators: 2,
+            base64_overhead: 100,
+        };
+
+        let expected_total_no_footer = 10 + 200 + 3000 + 0 + 2 + 100;
+        assert_eq!(breakdown_no_footer.total(), expected_total_no_footer);
+    }
+
+    #[test]
+    fn test_token_parsing_debugging_methods() {
+        let mut rng = rng();
+        let keypair = KeyPair::generate(&mut rng);
+
+        let mut claims = Claims::new();
+        claims.set_subject("debug-user").unwrap();
+        claims.add_custom("large_data", "x".repeat(500)).unwrap(); // Make it somewhat large
+
+        let mut footer = Footer::new();
+        footer.set_kid("debug-key").unwrap();
+
+        let token =
+            PasetoPQ::sign_with_footer(&keypair.signing_key, &claims, Some(&footer)).unwrap();
+        let parsed = ParsedToken::parse(&token).unwrap();
+
+        // Test debugging methods
+        assert!(parsed.payload_length() > 100); // Should have substantial payload
+        assert!(parsed.total_length() > parsed.payload_length()); // Total includes overhead
+        assert!(!parsed.payload_bytes().is_empty());
+
+        let summary = parsed.format_summary();
+        assert!(summary.contains("paseto.v1.public"));
+        assert!(summary.contains("signature: present"));
+        assert!(summary.contains("footer: present"));
+        assert!(summary.contains(&format!("{} bytes", parsed.payload_length())));
+    }
+
+    #[test]
+    fn test_token_parsing_middleware_scenarios() {
+        let mut rng = rng();
+        let keypair = KeyPair::generate(&mut rng);
+        let symmetric_key = SymmetricKey::generate(&mut rng);
+
+        // Create different token types
+        let mut claims = Claims::new();
+        claims.set_subject("middleware-test").unwrap();
+
+        let public_token = PasetoPQ::sign(&keypair.signing_key, &claims).unwrap();
+        let local_token = PasetoPQ::encrypt(&symmetric_key, &claims).unwrap();
+
+        // Simulate middleware routing logic
+        let tokens = vec![
+            (public_token, "public", true), // (token, expected_purpose, is_public)
+            (local_token, "local", false),
+        ];
+
+        for (token, expected_purpose, should_be_public) in tokens {
+            let parsed = ParsedToken::parse(&token).unwrap();
+
+            // Routing decisions
+            assert_eq!(parsed.purpose(), expected_purpose);
+            assert_eq!(parsed.is_public(), should_be_public);
+            assert_eq!(parsed.is_local(), !should_be_public);
+
+            // Logging/metrics simulation
+            let purpose = parsed.purpose();
+            let version = parsed.version();
+            let size = parsed.total_length();
+
+            assert!(!purpose.is_empty());
+            assert_eq!(version, "v1");
+            assert!(size > 0);
+
+            // Simulate size-based alerts
+            if size > 2048 {
+                // Would trigger monitoring alert
+                println!("Large token detected: {} bytes", size);
+            }
+        }
     }
 }

@@ -281,7 +281,7 @@ fn concurrent_operations(c: &mut Criterion) {
 fn key_serialization(c: &mut Criterion) {
     let mut group = c.benchmark_group("key_serialization");
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let keypair = KeyPair::generate(&mut rng);
 
     group.bench_function("signing_key_to_bytes", |b| {
@@ -312,7 +312,7 @@ fn memory_usage_simulation(c: &mut Criterion) {
     // Simulate high-frequency token operations (like a busy gateway)
     group.bench_function("high_frequency_sign_verify_cycle", |b| {
         b.iter(|| {
-            let mut rng = thread_rng();
+            let mut rng = rng();
             let keypair = KeyPair::generate(&mut rng);
 
             // Create 100 tokens rapidly (simulating burst traffic)

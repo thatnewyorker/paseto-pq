@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Display the actual token (truncated)
     println!("\n🎫 Sample PASETO-PQ Token:");
     if token.len() > 200 {
-        println!("   paseto.v1.pq.{}...", &token[13..200]);
+        println!("   paseto.v1.public.{}...", &token[13..200]);
         println!("   (truncated - full length: {} chars)", token.len());
     } else {
         println!("   {}", token);
