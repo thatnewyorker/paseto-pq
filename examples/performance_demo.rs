@@ -6,7 +6,7 @@
 //! Run with: cargo run --example performance_demo
 
 use paseto_pq::{Claims, KeyPair, PasetoPQ};
-use rand::rng;
+
 use std::time::Instant;
 use time::{Duration, OffsetDateTime};
 
@@ -16,6 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Key generation benchmark
     println!("🔑 Key Generation:");
+    let mut rng = rand::rng();
     let keygen_start = Instant::now();
     let keypair = KeyPair::generate(&mut rng);
     let keygen_time = keygen_start.elapsed();
