@@ -690,7 +690,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ### Development Setup
 
 ```bash
-git clone https://github.com/your-org/paseto-pq
+git clone https://github.com/thatnewyorker/paseto-pq.git
 cd paseto-pq
 cargo build
 cargo test
