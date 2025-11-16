@@ -2,6 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/paseto-pq.svg)](https://crates.io/crates/paseto-pq)
 [![Documentation](https://docs.rs/paseto-pq/badge.svg)](https://docs.rs/paseto-pq)
+[![CI](https://github.com/thatnewyorker/paseto-pq/workflows/CI/badge.svg)](https://github.com/thatnewyorker/paseto-pq/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
