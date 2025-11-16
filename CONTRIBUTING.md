@@ -153,8 +153,10 @@ For significant changes:
 Before submitting, ensure all tests pass:
 
 ```bash
-# Comprehensive test suite
-./scripts/test-all-features.sh  # If available, or run manually:
+# Use the test script (if working in your environment)
+../../scripts/test-paseto-pq-all-features.sh --fast
+
+# Or run tests manually:
 
 # Test each ML-DSA parameter set
 cargo test --no-default-features --features ml-dsa-44
@@ -169,11 +171,16 @@ cargo test --no-default-features --features maximum-security
 # Default features
 cargo test
 
-# Code quality
+# Code quality checks
 cargo clippy --all-targets --no-default-features --features ml-dsa-44 -- -D warnings
 cargo clippy --all-targets --no-default-features --features ml-dsa-65 -- -D warnings
 cargo clippy --all-targets --no-default-features --features ml-dsa-87 -- -D warnings
 cargo fmt --check
+
+# Build examples to ensure they compile
+cargo build --examples --no-default-features --features ml-dsa-44
+cargo build --examples --no-default-features --features ml-dsa-65
+cargo build --examples --no-default-features --features ml-dsa-87
 ```
 
 ### 4. Pull Request
