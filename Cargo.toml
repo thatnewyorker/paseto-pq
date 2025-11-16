@@ -63,7 +63,7 @@ balanced = ["ml-dsa-65"]           # Security/performance balance
 maximum-security = ["ml-dsa-87"]   # Maximum security
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["ml-dsa-44", "logging"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [[bench]]
