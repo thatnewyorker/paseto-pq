@@ -588,7 +588,7 @@ impl SymmetricKey {
 
 impl KemKeyPair {
     /// Generate a new post-quantum KEM key pair using ML-KEM-768
-    #[cfg_attr(feature = "logging", instrument(skip(rng)))]
+    #[cfg_attr(feature = "logging", instrument(skip(_rng)))]
     pub fn generate<R: CryptoRng + RngCore>(_rng: &mut R) -> Self {
         // Generate actual ML-KEM-768 key pair
         let (dk, ek) = MlKem768::generate(&mut chacha20poly1305::aead::OsRng);
