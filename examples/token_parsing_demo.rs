@@ -94,7 +94,7 @@ fn create_sample_tokens(
     large_claims.add_custom("large_data", "x".repeat(1000))?; // 1KB of data
     large_claims.add_custom(
         "permissions",
-        &(0..50).map(|i| format!("perm_{}", i)).collect::<Vec<_>>(),
+        (0..50).map(|i| format!("perm_{}", i)).collect::<Vec<_>>(),
     )?;
     let large_token = PasetoPQ::sign(keypair.signing_key(), &large_claims)?;
     tokens.insert("large_token".to_string(), large_token);

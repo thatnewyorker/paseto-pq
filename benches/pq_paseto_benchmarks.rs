@@ -48,12 +48,12 @@ fn token_signing(c: &mut Criterion) {
         // Add custom claims
         claims.add_custom("tenant_id", "org_abc123456789").unwrap();
         claims
-            .add_custom("roles", &["user", "admin", "reader", "writer"])
+            .add_custom("roles", ["user", "admin", "reader", "writer"])
             .unwrap();
         claims
             .add_custom(
                 "scopes",
-                &[
+                [
                     "read:messages",
                     "write:messages",
                     "admin:users",
@@ -64,7 +64,7 @@ fn token_signing(c: &mut Criterion) {
         claims
             .add_custom(
                 "permissions",
-                &[
+                [
                     "chat.send",
                     "chat.receive",
                     "files.upload",
@@ -78,7 +78,7 @@ fn token_signing(c: &mut Criterion) {
         claims
             .add_custom(
                 "metadata",
-                &serde_json::json!({
+                serde_json::json!({
                     "client_version": "1.0.0",
                     "platform": "linux",
                     "features": ["pq-crypto", "e2ee", "forward-secrecy"]
@@ -130,12 +130,12 @@ fn token_verification(c: &mut Criterion) {
 
         claims.add_custom("tenant_id", "org_abc123456789").unwrap();
         claims
-            .add_custom("roles", &["user", "admin", "reader", "writer"])
+            .add_custom("roles", ["user", "admin", "reader", "writer"])
             .unwrap();
         claims
             .add_custom(
                 "scopes",
-                &[
+                [
                     "read:messages",
                     "write:messages",
                     "admin:users",
@@ -322,10 +322,10 @@ fn memory_usage_simulation(c: &mut Criterion) {
             let tokens: Vec<_> = (0..100)
                 .map(|i| {
                     let mut claims = Claims::new();
-                    claims.set_subject(&format!("user{}", i)).unwrap();
+                    claims.set_subject(format!("user{}", i)).unwrap();
                     claims.set_issuer("my-service").unwrap();
                     claims.set_audience("api.example.com").unwrap();
-                    claims.set_jti(&format!("token-{}", i)).unwrap();
+                    claims.set_jti(format!("token-{}", i)).unwrap();
 
                     PasetoPQ::sign(keypair.signing_key(), &claims).unwrap()
                 })

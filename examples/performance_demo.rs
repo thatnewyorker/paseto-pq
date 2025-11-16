@@ -39,8 +39,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
     claims.set_jti("unique-token-123")?;
     claims.add_custom("tenant_id", "org_abc123")?;
-    claims.add_custom("roles", &["user", "admin"])?;
-    claims.add_custom("permissions", &["read:messages", "write:messages"])?;
+    claims.add_custom("roles", ["user", "admin"])?;
+    claims.add_custom("permissions", ["read:messages", "write:messages"])?;
 
     // Token signing benchmark
     println!("✍️  Token Signing:");
@@ -71,10 +71,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tokens = Vec::new();
     for i in 0..100 {
         let mut batch_claims = Claims::new();
-        batch_claims.set_subject(&format!("user{}", i))?;
+        batch_claims.set_subject(format!("user{}", i))?;
         batch_claims.set_issuer("my-service")?;
         batch_claims.set_audience("api.example.com")?;
-        batch_claims.set_jti(&format!("token-{}", i))?;
+        batch_claims.set_jti(format!("token-{}", i))?;
 
         let batch_token = PasetoPQ::sign(keypair.signing_key(), &batch_claims)?;
         tokens.push(batch_token);

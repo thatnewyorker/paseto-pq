@@ -31,9 +31,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Add custom claims for business logic
     claims.add_custom("user_type", "premium")?;
     claims.add_custom("tenant_id", "org_conflux_001")?;
-    claims.add_custom("roles", &["user", "admin", "api_access"])?;
+    claims.add_custom("roles", ["user", "admin", "api_access"])?;
     claims.add_custom("session_id", "sess_xyz789")?;
-    claims.add_custom("feature_flags", &["new_ui", "beta_features"])?;
+    claims.add_custom("feature_flags", ["new_ui", "beta_features"])?;
     claims.add_custom("quota_limit", 10000)?;
     claims.add_custom("last_login", "2025-01-13T22:44:26Z")?;
 

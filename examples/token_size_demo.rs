@@ -89,7 +89,7 @@ fn compare_token_types() -> Result<(), Box<dyn std::error::Error>> {
     let mut claims = Claims::new();
     claims.set_subject("comparison_user")?;
     claims.add_custom("role", "admin")?;
-    claims.add_custom("permissions", &["read", "write", "delete"])?;
+    claims.add_custom("permissions", ["read", "write", "delete"])?;
 
     let public_est = TokenSizeEstimator::public(&claims, false);
     let local_est = TokenSizeEstimator::local(&claims, false);
@@ -214,7 +214,7 @@ fn analyze_claim_impact() -> Result<(), Box<dyn std::error::Error>> {
             let mut c = Claims::new();
             c.set_subject("user123")?;
             for i in 0..20 {
-                c.add_custom(&format!("field_{}", i), &format!("value_{}", i))?;
+                c.add_custom(format!("field_{}", i), format!("value_{}", i))?;
             }
             c
         }),
@@ -451,7 +451,7 @@ fn create_rich_claims() -> Result<Claims, Box<dyn std::error::Error>> {
     let mut claims = create_standard_claims()?;
     claims.add_custom("role", "admin")?;
     claims.add_custom("tenant_id", "org_123456")?;
-    claims.add_custom("permissions", &["read", "write", "delete", "admin"])?;
+    claims.add_custom("permissions", ["read", "write", "delete", "admin"])?;
     claims.add_custom("session_type", "interactive")?;
     Ok(claims)
 }
@@ -492,7 +492,7 @@ fn create_api_auth_claims() -> Result<Claims, Box<dyn std::error::Error>> {
     claims.set_audience("api.example.com")?;
     claims.set_expiration(OffsetDateTime::now_utc() + time::Duration::hours(1))?;
     claims.add_custom("client_type", "service")?;
-    claims.add_custom("scopes", &["read:users", "write:data", "admin:system"])?;
+    claims.add_custom("scopes", ["read:users", "write:data", "admin:system"])?;
     claims.add_custom("rate_limit", 1000)?;
     Ok(claims)
 }

@@ -908,14 +908,14 @@ impl From<Claims> for serde_json::Value {
     fn from(claims: Claims) -> Self {
         // Use serde to convert the Claims to JSON Value
         // This leverages the existing Serialize implementation on Claims
-        serde_json::to_value(claims).unwrap_or_else(|_| serde_json::Value::Null)
+        serde_json::to_value(claims).unwrap_or(serde_json::Value::Null)
     }
 }
 
 /// Convert &Claims to serde_json::Value (borrowed version)
 impl From<&Claims> for serde_json::Value {
     fn from(claims: &Claims) -> Self {
-        serde_json::to_value(claims).unwrap_or_else(|_| serde_json::Value::Null)
+        serde_json::to_value(claims).unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -954,10 +954,10 @@ impl TokenSizeEstimator {
     pub fn public(claims: &Claims, has_footer: bool) -> Self {
         // Serialize claims to get actual payload size
         let claims_json = serde_json::to_string(claims).unwrap_or_default();
-        let claims_bytes = claims_json.as_bytes().len();
+        let claims_bytes = claims_json.len();
 
         // Calculate base64 encoded payload size
-        let payload_b64_len = ((claims_bytes + 2) / 3) * 4; // Base64 encoding
+        let payload_b64_len = claims_bytes.div_ceil(3) * 4; // Base64 encoding
 
         // Constants for public tokens
         let prefix_len = TOKEN_PREFIX_PUBLIC.len() + 1; // +1 for trailing dot
@@ -971,7 +971,7 @@ impl TokenSizeEstimator {
         };
         let footer_len = if has_footer { 150 } else { 0 }; // Estimated footer size
         let separators = if has_footer { 3 } else { 2 }; // Dots between parts
-        let base64_overhead = (claims_bytes * 4 + 2) / 3 - claims_bytes; // More accurate base64 overhead
+        let base64_overhead = (claims_bytes * 4).div_ceil(3) - claims_bytes; // More accurate base64 overhead
 
         let breakdown = TokenSizeBreakdown {
             prefix: prefix_len,
@@ -1007,17 +1007,17 @@ impl TokenSizeEstimator {
     pub fn local(claims: &Claims, has_footer: bool) -> Self {
         // Serialize claims to get actual payload size
         let claims_json = serde_json::to_string(claims).unwrap_or_default();
-        let claims_bytes = claims_json.as_bytes().len();
+        let claims_bytes = claims_json.len();
 
         // Local tokens encrypt the payload, add nonce (12 bytes) and auth tag (16 bytes)
         let encrypted_payload_len = claims_bytes + 12 + 16; // nonce + tag
-        let payload_b64_len = ((encrypted_payload_len + 2) / 3) * 4; // Base64 encoding
+        let payload_b64_len = encrypted_payload_len.div_ceil(3) * 4; // Base64 encoding
 
         // Constants for local tokens
         let prefix_len = TOKEN_PREFIX_LOCAL.len() + 1; // +1 for trailing dot
         let footer_len = if has_footer { 150 } else { 0 }; // Estimated footer size
         let separators = if has_footer { 2 } else { 1 }; // Dots between parts
-        let base64_overhead = (encrypted_payload_len * 4 + 2) / 3 - encrypted_payload_len; // More accurate base64 overhead
+        let base64_overhead = (encrypted_payload_len * 4).div_ceil(3) - encrypted_payload_len; // More accurate base64 overhead
 
         let breakdown = TokenSizeBreakdown {
             prefix: prefix_len,
@@ -1271,14 +1271,12 @@ impl ParsedToken {
 
     /// Get footer as JSON string, if present
     pub fn footer_json(&self) -> Option<Result<String, serde_json::Error>> {
-        self.footer.as_ref().map(|f| serde_json::to_string(f))
+        self.footer.as_ref().map(serde_json::to_string)
     }
 
     /// Get footer as pretty-printed JSON string, if present
     pub fn footer_json_pretty(&self) -> Option<Result<String, serde_json::Error>> {
-        self.footer
-            .as_ref()
-            .map(|f| serde_json::to_string_pretty(f))
+        self.footer.as_ref().map(serde_json::to_string_pretty)
     }
 
     /// Check if this is a public token (uses signatures)
@@ -1489,7 +1487,7 @@ impl PasetoPQ {
         let signature_bytes = signature.to_bytes();
 
         // Base64url encode the signature
-        let encoded_signature = URL_SAFE_NO_PAD.encode(&signature_bytes);
+        let encoded_signature = URL_SAFE_NO_PAD.encode(signature_bytes);
 
         // Construct final token with optional footer
         let token = match footer {
@@ -2004,7 +2002,7 @@ mod tests {
         claims.set_audience("conflux-network").unwrap();
         claims.set_jti("token-id-123").unwrap();
         claims.add_custom("tenant_id", "org_abc123").unwrap();
-        claims.add_custom("roles", &["user", "admin"]).unwrap();
+        claims.add_custom("roles", ["user", "admin"]).unwrap();
 
         let token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
         assert!(token.starts_with("paseto.pq1.public."));
@@ -2223,7 +2221,7 @@ mod tests {
         claims.set_audience("conflux-network").unwrap();
         claims.set_jti("token-id-123").unwrap();
         claims.add_custom("tenant_id", "org_abc123").unwrap();
-        claims.add_custom("roles", &["user", "admin"]).unwrap();
+        claims.add_custom("roles", ["user", "admin"]).unwrap();
 
         let token = PasetoPQ::encrypt(&key, &claims).unwrap();
         assert!(token.starts_with("paseto.pq1.local."));
@@ -2599,7 +2597,7 @@ mod tests {
         claims.add_custom("role", "admin").unwrap();
         claims.add_custom("tenant_id", "org_abc123").unwrap();
         claims
-            .add_custom("permissions", &["read", "write", "delete"])
+            .add_custom("permissions", ["read", "write", "delete"])
             .unwrap();
 
         // Test From<Claims> for serde_json::Value
@@ -2681,7 +2679,7 @@ mod tests {
             .unwrap();
         claims.add_custom("user_type", "premium").unwrap();
         claims
-            .add_custom("scopes", &["profile", "email", "admin"])
+            .add_custom("scopes", ["profile", "email", "admin"])
             .unwrap();
 
         // Test integration with logging (simulated)
@@ -3020,7 +3018,7 @@ mod tests {
             base64_overhead: 100,
         };
 
-        let expected_total_no_footer = 10 + 200 + 3000 + 0 + 2 + 100;
+        let expected_total_no_footer = 10 + 200 + 3000 + 2 + 100;
         assert_eq!(breakdown_no_footer.total(), expected_total_no_footer);
     }
 

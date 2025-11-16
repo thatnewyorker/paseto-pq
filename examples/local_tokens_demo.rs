@@ -62,14 +62,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(2))?;
     claims.set_jti("session-abc-123")?;
     claims.add_custom("tenant_id", "corp_xyz789")?;
-    claims.add_custom("roles", &["user", "manager"])?;
+    claims.add_custom("roles", ["user", "manager"])?;
+    claims.add_custom("permissions", ["read:data", "write:reports", "admin:users"])?;
     claims.add_custom(
-        "permissions",
-        &["read:data", "write:reports", "admin:users"],
-    )?;
-    claims.add_custom(
-        "session_data",
-        &serde_json::json!({
+        "session_metadata",
+        serde_json::json!({
             "login_time": "2024-01-15T10:30:00Z",
             "ip_address": "192.168.1.100",
             "device": "laptop-chrome"

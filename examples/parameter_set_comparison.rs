@@ -133,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for &size in &payload_sizes {
         let mut large_claims = Claims::new();
         large_claims.set_subject("test-user")?;
-        large_claims.add_custom("large_data", &"x".repeat(size))?;
+        large_claims.add_custom("large_data", "x".repeat(size))?;
 
         let estimator = TokenSizeEstimator::public(&large_claims, false);
         println!(
@@ -151,8 +151,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for i in 0..50 {
         let mut batch_claims = Claims::new();
-        batch_claims.set_subject(&format!("user{}", i))?;
-        batch_claims.set_jti(&format!("batch-token-{}", i))?;
+        batch_claims.set_subject(format!("user{}", i))?;
+        batch_claims.set_jti(format!("batch-token-{}", i))?;
 
         let token = PasetoPQ::sign(keypair.signing_key(), &batch_claims)?;
         tokens.push(token);
