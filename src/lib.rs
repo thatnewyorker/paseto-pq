@@ -2860,20 +2860,44 @@ mod tests {
 
         let estimator = TokenSizeEstimator::public(&claims, false);
 
-        // Public tokens should be large due to ML-DSA signature
-        assert!(estimator.total_bytes() > 4000);
-        assert!(estimator.total_bytes() < 6000); // Reasonable upper bound
+        // Public token size expectations vary by ML-DSA parameter set
+        let (expected_min_size, expected_max_size) = if cfg!(feature = "ml-dsa-44") {
+            (2800, 3200) // ML-DSA-44: ~2.8KB signature + payload + overhead
+        } else if cfg!(feature = "ml-dsa-65") {
+            (4200, 4800) // ML-DSA-65: ~4.3KB signature + payload + overhead
+        } else {
+            (5000, 5500) // ML-DSA-87: ~5KB signature + payload + overhead
+        };
 
-        // Check size limit methods
-        assert!(!estimator.fits_in_cookie()); // Should be too large for cookies
-        assert!(!estimator.fits_in_url()); // Should be too large for URLs
-        assert!(estimator.fits_in_header()); // Should fit in headers
+        assert!(estimator.total_bytes() >= expected_min_size);
+        assert!(estimator.total_bytes() < expected_max_size);
+
+        // Check size limit methods - expectations vary by parameter set
+        if cfg!(feature = "ml-dsa-44") {
+            // ML-DSA-44 tokens (~2.8KB) fit in cookies but not URLs
+            assert!(estimator.fits_in_cookie()); // 2885 < 4096
+            assert!(!estimator.fits_in_url()); // 2885 > 2048
+        } else {
+            // ML-DSA-65 and ML-DSA-87 tokens are too large for both
+            assert!(!estimator.fits_in_cookie()); // > 4096
+            assert!(!estimator.fits_in_url()); // > 2048
+        }
+        assert!(estimator.fits_in_header()); // All should fit in headers
 
         // Test breakdown components
         let breakdown = estimator.breakdown();
         assert!(breakdown.prefix > 0);
         assert!(breakdown.payload > 0);
-        assert!(breakdown.signature_or_tag > 4000); // ML-DSA signature is large
+
+        // Signature size expectations based on parameter set
+        let expected_sig_size = if cfg!(feature = "ml-dsa-44") {
+            2800
+        } else if cfg!(feature = "ml-dsa-65") {
+            4300
+        } else {
+            5000
+        };
+        assert_eq!(breakdown.signature_or_tag, expected_sig_size);
         assert_eq!(breakdown.footer, None);
         assert!(breakdown.separators > 0);
         assert!(breakdown.base64_overhead > 0);
