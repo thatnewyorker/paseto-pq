@@ -1960,35 +1960,45 @@ impl Drop for KemKeyPair {
 mod tests {
     use super::*;
     use rand::rng;
+    use std::thread;
     use time::Duration;
 
     #[test]
     fn test_keypair_generation() {
-        let mut rng = rng();
-        let keypair = KeyPair::generate(&mut rng);
+        thread::Builder::new()
+            .name("keypair-generation-smoke".to_string())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let mut rng = rng();
+                let keypair = KeyPair::generate(&mut rng);
 
-        // Test bytes export/import
-        let signing_bytes = keypair.signing_key_to_bytes();
-        let verifying_bytes = keypair.verifying_key_to_bytes();
+                // Test bytes export/import
+                let signing_bytes = keypair.signing_key_to_bytes();
+                let verifying_bytes = keypair.verifying_key_to_bytes();
 
-        assert!(!signing_bytes.is_empty());
-        assert!(!verifying_bytes.is_empty());
+                assert!(!signing_bytes.is_empty());
+                assert!(!verifying_bytes.is_empty());
 
-        let imported_signing = KeyPair::signing_key_from_bytes(&signing_bytes).unwrap();
-        let imported_verifying = KeyPair::verifying_key_from_bytes(&verifying_bytes).unwrap();
+                let imported_signing = KeyPair::signing_key_from_bytes(&signing_bytes).unwrap();
+                let imported_verifying =
+                    KeyPair::verifying_key_from_bytes(&verifying_bytes).unwrap();
 
-        // Keys should be functionally equivalent (test by signing/verifying)
-        let mut claims = Claims::new();
-        claims.set_subject("test").unwrap();
+                // Keys should be functionally equivalent (test by signing/verifying)
+                let mut claims = Claims::new();
+                claims.set_subject("test").unwrap();
 
-        let token1 = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
-        let token2 = PasetoPQ::sign(&imported_signing, &claims).unwrap();
+                let token1 = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
+                let token2 = PasetoPQ::sign(&imported_signing, &claims).unwrap();
 
-        // Both should verify with either key
-        PasetoPQ::verify(keypair.verifying_key(), &token1).unwrap();
-        PasetoPQ::verify(&imported_verifying, &token1).unwrap();
-        PasetoPQ::verify(keypair.verifying_key(), &token2).unwrap();
-        PasetoPQ::verify(&imported_verifying, &token2).unwrap();
+                // Both should verify with either key
+                PasetoPQ::verify(keypair.verifying_key(), &token1).unwrap();
+                PasetoPQ::verify(&imported_verifying, &token1).unwrap();
+                PasetoPQ::verify(keypair.verifying_key(), &token2).unwrap();
+                PasetoPQ::verify(&imported_verifying, &token2).unwrap();
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
