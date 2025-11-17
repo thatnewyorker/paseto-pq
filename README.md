@@ -9,16 +9,17 @@
 
 A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-Dilithium) signatures and **ChaCha20-Poly1305** encryption. This crate provides quantum-safe authentication and encryption tokens with comprehensive metadata support, resistant to attacks by quantum computers implementing Shor's algorithm.
 
-## 🔒 Version 0.1.1 Security Enhancement
+## 🔒 Security & Quality Enhancements
 
-**Critical Security Fix**: Version 0.1.1 implements proper footer authentication per PASETO RFC Section 2.2.1. This release includes:
+**Latest Release**: Version 0.1.2 includes code quality improvements and critical security fixes:
 
-- ✅ **PAE-Based Footer Authentication**: Footers are now cryptographically authenticated using Pre-Authentication Encoding
+- ✅ **PAE-Based Footer Authentication**: Footers are now cryptographically authenticated using Pre-Authentication Encoding (v0.1.1+)
 - ✅ **RFC Compliance**: Full adherence to PASETO specification requirements
 - ✅ **Tamper Detection**: Footer tampering is now properly detected and rejected
+- ✅ **Code Quality**: Passes strict clippy linting with `-D warnings` (v0.1.2)
 - ✅ **Backward Compatibility**: No API changes, existing code works unchanged
 
-**Users should upgrade immediately** from v0.1.0 for security compliance.
+**Users should upgrade to v0.1.2** for the latest security and quality improvements.
 
 ## 🛡️ Security Level Selection
 
@@ -41,16 +42,16 @@ A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-D
 
 ```toml
 # Default (recommended for most applications)
-paseto-pq = "0.1.1"
+paseto-pq = "0.1.2"
 
 # High security applications  
-paseto-pq = { version = "0.1.1", features = ["balanced"] }
+paseto-pq = { version = "0.1.2", features = ["balanced"] }
 
 # Maximum security applications
-paseto-pq = { version = "0.1.1", features = ["maximum-security"] }
+paseto-pq = { version = "0.1.2", features = ["maximum-security"] }
 
 # Explicit parameter set selection
-paseto-pq = { version = "0.1.1", features = ["ml-dsa-65"], default-features = false }
+paseto-pq = { version = "0.1.2", features = ["ml-dsa-65"], default-features = false }
 ```
 
 ## 🚀 Features

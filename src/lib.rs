@@ -3437,7 +3437,7 @@ mod tests {
             crate::pae::pae_encode_public_token(header, &claims_json, &empty_footer_bytes);
 
         // PAE message should contain the empty footer bytes (length 0)
-        assert!(pae_message.len() > 0);
+        assert!(!pae_message.is_empty());
         // This proves empty footers are still authenticated via PAE
     }
 

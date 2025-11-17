@@ -5,6 +5,28 @@ All notable changes to the `paseto-pq` crate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2025-01-03
+
+### 🔧 Fixed
+
+- **LINTING**: Fixed clippy warnings for better code quality
+  - Replaced `len() > 0` with `!is_empty()` for clearer intent
+  - All clippy checks now pass with `-D warnings` across all feature combinations
+- **CONSISTENCY**: Updated all example names from "alice" to "elise" following naming conventions
+
+### 🧪 Testing
+
+- **VALIDATION**: Confirmed all 67 unit tests + 15 doc tests pass
+- **EXAMPLES**: Verified all examples work correctly with updated naming
+- **FEATURES**: Tested clippy compliance across ml-dsa-44, ml-dsa-65, ml-dsa-87, and logging features
+
+### 📚 Documentation
+
+- **EXAMPLES**: Updated all demo code to use "elise@example.com" consistently
+- **QUALITY**: Improved code clarity following Rust best practices
+
+---
+
 ## [0.1.1] - 2025-01-03
 
 ### 🔒 Security
@@ -95,5 +117,6 @@ For the footer authentication issue fixed in v0.1.1:
 - **Fixed**: v0.1.1 implements proper PAE-based authentication
 - **Recommendation**: Upgrade immediately
 
+[0.1.2]: https://github.com/thatnewyorker/paseto-pq/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/thatnewyorker/paseto-pq/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/thatnewyorker/paseto-pq/releases/tag/v0.1.0

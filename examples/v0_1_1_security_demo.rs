@@ -1,6 +1,6 @@
-//! PASETO-PQ v0.1.1 Security Demo: Footer Authentication
+//! PASETO-PQ v0.1.2 Security Demo: Footer Authentication
 //!
-//! This example demonstrates the critical security improvements in version 0.1.1,
+//! This example demonstrates the critical security improvements in version 0.1.1+,
 //! specifically the implementation of proper footer authentication using
 //! Pre-Authentication Encoding (PAE) per PASETO RFC Section 2.2.1.
 //!
@@ -11,7 +11,7 @@ use rand::rng;
 use time::OffsetDateTime;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔒 PASETO-PQ v0.1.1 Security Demo: Footer Authentication");
+    println!("🔒 PASETO-PQ v0.1.2 Security Demo: Footer Authentication");
     println!("═══════════════════════════════════════════════════════════");
     println!();
 
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             println!("✅ Footer tampering detected and rejected!");
             println!("   Error: {:?}", e);
-            println!("   🛡️  v0.1.1 PAE authentication prevented privilege escalation");
+            println!("   🛡️  v0.1.1+ PAE authentication prevented privilege escalation");
         }
     }
 
@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(_e) => {
             println!("✅ Local token footer tampering detected!");
             println!("   Error: Decryption failed (AEAD authentication)");
-            println!("   🛡️  v0.1.1 PAE-based AAD prevented metadata tampering");
+            println!("   🛡️  v0.1.1+ PAE-based AAD prevented metadata tampering");
         }
     }
 
@@ -165,7 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ No API Changes: Existing code works unchanged");
     println!("✅ Transparent Security: Protection works automatically");
     println!();
-    println!("🚀 Upgrade to v0.1.1 for enhanced security!");
+    println!("🚀 Upgrade to v0.1.2 for enhanced security and code quality!");
 
     Ok(())
 }
