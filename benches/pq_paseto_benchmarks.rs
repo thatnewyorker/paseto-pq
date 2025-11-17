@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use paseto_pq::{Claims, KeyPair, PasetoPQ};
+use paseto_pq::{Claims, Footer, KeyPair, PasetoPQ, SymmetricKey};
 use rand::rng;
 use std::hint::black_box;
 use time::{Duration, OffsetDateTime};
@@ -344,6 +344,119 @@ fn memory_usage_simulation(c: &mut Criterion) {
     group.finish();
 }
 
+fn pae_benchmarks(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pae_v0_1_1");
+
+    // Test PAE encoding with different piece counts and sizes
+    let small_pieces = vec![b"header" as &[u8], b"payload", b"footer"];
+
+    let medium_payload = vec![b'x'; 1000];
+    let medium_footer = vec![b'f'; 100];
+    let medium_pieces = vec![
+        b"paseto.pq1.public" as &[u8],
+        &medium_payload, // 1KB payload
+        &medium_footer,  // 100B footer
+    ];
+
+    let large_payload = vec![b'y'; 10000];
+    let large_footer = vec![b'g'; 500];
+    let large_pieces = vec![
+        b"paseto.pq1.local" as &[u8],
+        &large_payload, // 10KB payload
+        &large_footer,  // 500B footer
+    ];
+
+    group.bench_function("pae_small_pieces", |b| {
+        b.iter(|| black_box(paseto_pq::pae_encode(&small_pieces)))
+    });
+
+    group.bench_function("pae_medium_pieces", |b| {
+        b.iter(|| black_box(paseto_pq::pae_encode(&medium_pieces)))
+    });
+
+    group.bench_function("pae_large_pieces", |b| {
+        b.iter(|| black_box(paseto_pq::pae_encode(&large_pieces)))
+    });
+
+    // Test many small pieces (stress test)
+    let many_pieces: Vec<&[u8]> = (0..100).map(|_| b"small" as &[u8]).collect();
+    group.bench_function("pae_many_small_pieces", |b| {
+        b.iter(|| black_box(paseto_pq::pae_encode(&many_pieces)))
+    });
+
+    group.finish();
+}
+
+fn v0_1_1_footer_authentication(c: &mut Criterion) {
+    let mut group = c.benchmark_group("v0_1_1_footer_auth");
+
+    let mut rng = rng();
+    let keypair = KeyPair::generate(&mut rng);
+    let symmetric_key = SymmetricKey::generate(&mut rng);
+
+    let mut claims = Claims::new();
+    claims.set_subject("benchmark-user").unwrap();
+    claims.set_issuer("benchmark-service").unwrap();
+    claims.set_audience("api.benchmark.com").unwrap();
+
+    let mut footer = Footer::new();
+    footer.set_kid("bench-key-001").unwrap();
+    footer.set_version("1.0").unwrap();
+    footer.add_custom("role", &"admin").unwrap();
+
+    // Benchmark public token signing with footer authentication (v0.1.1)
+    group.bench_function("public_sign_with_footer", |b| {
+        b.iter(|| {
+            black_box(
+                PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap(),
+            )
+        })
+    });
+
+    // Benchmark public token verification with footer authentication (v0.1.1)
+    let public_token =
+        PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
+    group.bench_function("public_verify_with_footer", |b| {
+        b.iter(|| {
+            black_box(PasetoPQ::verify_with_footer(keypair.verifying_key(), &public_token).unwrap())
+        })
+    });
+
+    // Benchmark local token encryption with footer authentication (v0.1.1)
+    group.bench_function("local_encrypt_with_footer", |b| {
+        b.iter(|| {
+            black_box(
+                PasetoPQ::encrypt_with_footer(&symmetric_key, &claims, Some(&footer)).unwrap(),
+            )
+        })
+    });
+
+    // Benchmark local token decryption with footer authentication (v0.1.1)
+    let local_token =
+        PasetoPQ::encrypt_with_footer(&symmetric_key, &claims, Some(&footer)).unwrap();
+    group.bench_function("local_decrypt_with_footer", |b| {
+        b.iter(|| black_box(PasetoPQ::decrypt_with_footer(&symmetric_key, &local_token).unwrap()))
+    });
+
+    // Compare with no-footer operations
+    group.bench_function("public_sign_no_footer", |b| {
+        b.iter(|| {
+            black_box(PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, None).unwrap())
+        })
+    });
+
+    let no_footer_token = PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, None).unwrap();
+    group.bench_function("public_verify_no_footer", |b| {
+        b.iter(|| {
+            black_box(
+                PasetoPQ::verify_with_footer(keypair.verifying_key(), &no_footer_token).unwrap(),
+            )
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     keypair_generation,
@@ -352,6 +465,8 @@ criterion_group!(
     token_sizes,
     concurrent_operations,
     key_serialization,
-    memory_usage_simulation
+    memory_usage_simulation,
+    pae_benchmarks,
+    v0_1_1_footer_authentication
 );
 criterion_main!(benches);

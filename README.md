@@ -9,6 +9,17 @@
 
 A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-Dilithium) signatures and **ChaCha20-Poly1305** encryption. This crate provides quantum-safe authentication and encryption tokens with comprehensive metadata support, resistant to attacks by quantum computers implementing Shor's algorithm.
 
+## 🔒 Version 0.1.1 Security Enhancement
+
+**Critical Security Fix**: Version 0.1.1 implements proper footer authentication per PASETO RFC Section 2.2.1. This release includes:
+
+- ✅ **PAE-Based Footer Authentication**: Footers are now cryptographically authenticated using Pre-Authentication Encoding
+- ✅ **RFC Compliance**: Full adherence to PASETO specification requirements
+- ✅ **Tamper Detection**: Footer tampering is now properly detected and rejected
+- ✅ **Backward Compatibility**: No API changes, existing code works unchanged
+
+**Users should upgrade immediately** from v0.1.0 for security compliance.
+
 ## 🛡️ Security Level Selection
 
 **Default: ml-dsa-44** - Optimized for distributed systems and network protocols
@@ -30,24 +41,26 @@ A pure post-quantum implementation of PASETO tokens using **ML-DSA** (CRYSTALS-D
 
 ```toml
 # Default (recommended for most applications)
-paseto-pq = "0.1.0"
+paseto-pq = "0.1.1"
 
 # High security applications  
-paseto-pq = { version = "0.1.0", features = ["balanced"] }
+paseto-pq = { version = "0.1.1", features = ["balanced"] }
 
 # Maximum security applications
-paseto-pq = { version = "0.1.0", features = ["maximum-security"] }
+paseto-pq = { version = "0.1.1", features = ["maximum-security"] }
 
 # Explicit parameter set selection
-paseto-pq = { version = "0.1.0", features = ["ml-dsa-65"], default-features = false }
+paseto-pq = { version = "0.1.1", features = ["ml-dsa-65"], default-features = false }
 ```
 
 ## 🚀 Features
 
 - **🔒 Quantum-Safe**: Uses ML-DSA (NIST FIPS 204) signatures and ML-KEM-768 key exchange
+- **🛡️ RFC-Compliant Security**: Proper footer authentication via PAE (v0.1.1+)
 - **🦀 Pure Rust**: No C dependencies, built on RustCrypto
 - **🎯 Full PASETO Parity**: Complete implementation with both public and local tokens
 - **⚡ Practical Performance**: Optimized for real-world usage patterns
+- **🔐 Footer Authentication**: Cryptographic protection of footer metadata
 - **🔧 Easy Integration**: Drop-in replacement for authentication and encryption tokens
 - **📦 Dual Token Types**: Public (signatures) and Local (symmetric encryption)
 - **🦶 Footer Support**: Authenticated metadata for key management and service integration

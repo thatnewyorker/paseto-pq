@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create standard claims
     let mut claims = Claims::new();
-    claims.set_subject("alice@example.com")?;
+    claims.set_subject("elise@example.com")?;
     claims.set_issuer("auth-service")?;
     claims.set_audience("api.example.com")?;
     claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(2))?;
@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Verify claims and footer
     assert_eq!(
         verified_public.claims().subject(),
-        Some("alice@example.com")
+        Some("elise@example.com")
     );
 
     let footer_data = verified_public.footer().expect("Footer should be present");

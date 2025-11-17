@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create test claims
     let mut claims = Claims::new();
-    claims.set_subject("alice@example.com")?;
+    claims.set_subject("elise@example.com")?;
     claims.set_issuer("secure-service")?;
     claims.set_audience("api.example.com")?;
     claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(2))?;
@@ -156,8 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "   Subject matches:     {} / {}",
-        pub_claims.subject() == Some("alice@example.com"),
-        loc_claims.subject() == Some("alice@example.com")
+        pub_claims.subject() == Some("elise@example.com"),
+        loc_claims.subject() == Some("elise@example.com")
     );
 
     println!(

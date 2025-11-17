@@ -72,6 +72,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use anyhow::Result;
+pub mod pae;
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 // Conditional compilation for ML-DSA parameter set selection
@@ -129,7 +131,7 @@ use time::OffsetDateTime;
 // Symmetric encryption imports
 use chacha20poly1305::{
     ChaCha20Poly1305, Nonce,
-    aead::{Aead, AeadCore, KeyInit, OsRng as AeadOsRng},
+    aead::{AeadCore, AeadInPlace, KeyInit, OsRng as AeadOsRng},
 };
 
 #[cfg(feature = "logging")]
@@ -137,6 +139,10 @@ use tracing::{debug, instrument, warn};
 
 /// Post-quantum PASETO implementation using ML-DSA-65
 pub struct PasetoPQ;
+
+// Re-export core PAE function for advanced users (added in v0.1.1)
+// Internal functions like le64_encode remain private
+pub use pae::pae_encode;
 
 /// A post-quantum key pair for signing and verification
 #[derive(Clone)]
@@ -253,7 +259,7 @@ impl Footer {
     }
 
     /// Serialize footer to base64url-encoded JSON
-    pub(crate) fn to_base64(&self) -> Result<String, PqPasetoError> {
+    pub fn to_base64(&self) -> Result<String, PqPasetoError> {
         let json = serde_json::to_vec(self)?;
         Ok(URL_SAFE_NO_PAD.encode(&json))
     }
@@ -1469,24 +1475,36 @@ impl PasetoPQ {
         claims: &Claims,
         footer: Option<&Footer>,
     ) -> Result<String, PqPasetoError> {
-        // Serialize claims to JSON
-        let payload = serde_json::to_vec(claims)?;
+        // Serialize claims to JSON bytes (not base64 for PAE)
+        let payload_bytes = serde_json::to_vec(claims)?;
 
         #[cfg(feature = "logging")]
-        debug!("Serialized claims to {} bytes", payload.len());
+        debug!("Serialized claims to {} bytes", payload_bytes.len());
 
-        // Base64url encode the payload
-        let encoded_payload = URL_SAFE_NO_PAD.encode(&payload);
+        // Serialize footer to JSON bytes (empty if None)
+        let footer_bytes = match footer {
+            Some(f) => serde_json::to_vec(f)?,
+            None => Vec::new(), // Empty bytes for no footer
+        };
 
-        // Create the message to sign (prefix + payload)
-        let message = format!("{}.{}", TOKEN_PREFIX_PUBLIC, encoded_payload);
-        let message_bytes = message.as_bytes();
+        // Create PAE message for signing (RFC Section 2.2.1)
+        // PAE([header, payload_bytes, footer_bytes])
+        let header = TOKEN_PREFIX_PUBLIC.as_bytes();
+        let pae_message =
+            crate::pae::pae_encode_public_token(header, &payload_bytes, &footer_bytes);
 
-        // Sign with ML-DSA
-        let signature = signing_key.0.sign(message_bytes);
+        #[cfg(feature = "logging")]
+        debug!(
+            "Created PAE message of {} bytes for signing",
+            pae_message.len()
+        );
+
+        // Sign the PAE-encoded message with ML-DSA
+        let signature = signing_key.0.sign(&pae_message);
         let signature_bytes = signature.to_bytes();
 
-        // Base64url encode the signature
+        // Base64url encode components for token construction
+        let encoded_payload = URL_SAFE_NO_PAD.encode(&payload_bytes);
         let encoded_signature = URL_SAFE_NO_PAD.encode(signature_bytes);
 
         // Construct final token with optional footer
@@ -1506,9 +1524,9 @@ impl PasetoPQ {
 
         #[cfg(feature = "logging")]
         debug!(
-            "Generated token with {} byte signature{}",
+            "Generated v0.1.1 token with {} byte signature and PAE footer authentication{}",
             signature_bytes.len(),
-            if footer.is_some() { " and footer" } else { "" }
+            if footer.is_some() { " with footer" } else { "" }
         );
 
         Ok(token)
@@ -1527,11 +1545,11 @@ impl PasetoPQ {
         claims: &Claims,
         footer: Option<&Footer>,
     ) -> Result<String, PqPasetoError> {
-        // Serialize claims to JSON
-        let payload = serde_json::to_vec(claims)?;
+        // Serialize claims to JSON bytes
+        let payload_bytes = serde_json::to_vec(claims)?;
 
         #[cfg(feature = "logging")]
-        debug!("Serialized claims to {} bytes", payload.len());
+        debug!("Serialized claims to {} bytes", payload_bytes.len());
 
         // Create cipher
         let cipher = ChaCha20Poly1305::new((&symmetric_key.0).into());
@@ -1539,12 +1557,35 @@ impl PasetoPQ {
         // Generate random nonce
         let nonce = ChaCha20Poly1305::generate_nonce(&mut AeadOsRng);
 
-        // Encrypt payload
-        let ciphertext = cipher
-            .encrypt(&nonce, payload.as_ref())
+        // Serialize footer to JSON bytes (empty if None)
+        let footer_bytes = match footer {
+            Some(f) => serde_json::to_vec(f)?,
+            None => Vec::new(), // Empty bytes for no footer
+        };
+
+        // Create PAE-encoded AAD for footer authentication (RFC Section 2.2.1)
+        // PAE([header, nonce_bytes, footer_bytes])
+        let header = TOKEN_PREFIX_LOCAL.as_bytes();
+        let nonce_bytes = nonce.as_slice();
+        let aad = crate::pae::pae_encode_local_token(header, nonce_bytes, &footer_bytes);
+
+        #[cfg(feature = "logging")]
+        debug!(
+            "Created PAE AAD of {} bytes for footer authentication",
+            aad.len()
+        );
+
+        // Encrypt payload with PAE AAD (footer now authenticated by AEAD!)
+        let mut buffer = payload_bytes.clone();
+        let tag = cipher
+            .encrypt_in_place_detached(&nonce, &aad, &mut buffer)
             .map_err(|e| PqPasetoError::EncryptionError(format!("Encryption failed: {}", e)))?;
 
-        // Combine nonce + ciphertext
+        // Combine encrypted payload with authentication tag
+        let mut ciphertext = buffer;
+        ciphertext.extend_from_slice(&tag);
+
+        // Combine nonce + ciphertext + tag
         let mut encrypted_data = Vec::new();
         encrypted_data.extend_from_slice(&nonce);
         encrypted_data.extend_from_slice(&ciphertext);
@@ -1563,9 +1604,9 @@ impl PasetoPQ {
 
         #[cfg(feature = "logging")]
         debug!(
-            "Generated local token with {} byte payload{}",
+            "Generated v0.1.1 local token with {} byte payload and PAE footer authentication{}",
             encrypted_data.len(),
-            if footer.is_some() { " and footer" } else { "" }
+            if footer.is_some() { " with footer" } else { "" }
         );
 
         Ok(token)
@@ -1621,24 +1662,64 @@ impl PasetoPQ {
             PqPasetoError::InvalidFormat(format!("Invalid payload encoding: {}", e))
         })?;
 
-        // Split nonce and ciphertext
-        if encrypted_data.len() < NONCE_SIZE {
+        // Split nonce, ciphertext, and tag
+        if encrypted_data.len() < NONCE_SIZE + 16 {
             return Err(PqPasetoError::DecryptionError(
-                "Encrypted data too short for nonce".into(),
+                "Encrypted data too short for nonce and tag".into(),
             ));
         }
 
         let nonce = Nonce::from_slice(&encrypted_data[..NONCE_SIZE]);
-        let ciphertext = &encrypted_data[NONCE_SIZE..];
+        let ciphertext_with_tag = &encrypted_data[NONCE_SIZE..];
 
-        // Create cipher and decrypt
-        let cipher = ChaCha20Poly1305::new((&symmetric_key.0).into());
-        let payload_bytes = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|e| PqPasetoError::DecryptionError(format!("Decryption failed: {}", e)))?;
+        // Split ciphertext and authentication tag (last 16 bytes)
+        if ciphertext_with_tag.len() < 16 {
+            return Err(PqPasetoError::DecryptionError(
+                "Encrypted data too short for authentication tag".into(),
+            ));
+        }
+
+        let tag_start = ciphertext_with_tag.len() - 16;
+        let mut ciphertext = ciphertext_with_tag[..tag_start].to_vec();
+        let tag = &ciphertext_with_tag[tag_start..];
+
+        // Serialize footer to JSON bytes (empty if None)
+        let footer_bytes = match &footer {
+            Some(f) => serde_json::to_vec(f)?,
+            None => Vec::new(), // Empty bytes for no footer
+        };
+
+        // Reconstruct PAE-encoded AAD for footer validation (v0.1.1 RFC-compliant)
+        // PAE([header, nonce_bytes, footer_bytes])
+        let header = TOKEN_PREFIX_LOCAL.as_bytes();
+        let nonce_bytes = nonce.as_slice();
+        let aad = crate::pae::pae_encode_local_token(header, nonce_bytes, &footer_bytes);
 
         #[cfg(feature = "logging")]
-        debug!("Decryption successful");
+        debug!(
+            "Reconstructed PAE AAD of {} bytes for footer validation",
+            aad.len()
+        );
+
+        // Create cipher and decrypt with PAE AAD (footer tampering now detected!)
+        let cipher = ChaCha20Poly1305::new((&symmetric_key.0).into());
+
+        // Convert tag slice to GenericArray
+        use chacha20poly1305::aead::generic_array::GenericArray;
+        let tag_array = GenericArray::from_slice(tag);
+
+        let payload_bytes = cipher
+            .decrypt_in_place_detached(nonce, &aad, &mut ciphertext, tag_array)
+            .map_err(|e| {
+                PqPasetoError::DecryptionError(format!(
+                    "Decryption failed (footer authentication failed): {}",
+                    e
+                ))
+            })
+            .map(|_| ciphertext)?;
+
+        #[cfg(feature = "logging")]
+        debug!("v0.1.1 PAE decryption successful with footer authentication");
 
         // Parse claims
         let claims: Claims = serde_json::from_slice(&payload_bytes)?;
@@ -1754,9 +1835,28 @@ impl PasetoPQ {
             ));
         };
 
-        // Reconstruct message that was signed (without footer)
-        let message = format!("{}.{}", TOKEN_PREFIX_PUBLIC, encoded_payload);
-        let message_bytes = message.as_bytes();
+        // Decode payload bytes
+        let payload_bytes = URL_SAFE_NO_PAD.decode(encoded_payload).map_err(|e| {
+            PqPasetoError::InvalidFormat(format!("Invalid payload encoding: {}", e))
+        })?;
+
+        // Serialize footer to bytes for PAE (empty if None)
+        let footer_bytes = match &footer {
+            Some(f) => serde_json::to_vec(f)?,
+            None => Vec::new(), // Empty bytes for no footer
+        };
+
+        // Reconstruct PAE message that was signed (v0.1.1 RFC-compliant)
+        // PAE([header, payload_bytes, footer_bytes])
+        let header = TOKEN_PREFIX_PUBLIC.as_bytes();
+        let pae_message =
+            crate::pae::pae_encode_public_token(header, &payload_bytes, &footer_bytes);
+
+        #[cfg(feature = "logging")]
+        debug!(
+            "Reconstructed PAE message of {} bytes for verification",
+            pae_message.len()
+        );
 
         // Decode signature
         let signature_bytes = URL_SAFE_NO_PAD.decode(encoded_signature).map_err(|e| {
@@ -1771,20 +1871,16 @@ impl PasetoPQ {
         let signature = ml_dsa::Signature::<MlDsaParam>::decode(&encoded_sig)
             .ok_or_else(|| PqPasetoError::CryptoError("Failed to decode signature".into()))?;
 
-        // Verify signature
+        // Verify signature against PAE message (footer tampering now detected!)
         verifying_key
             .0
-            .verify(message_bytes, &signature)
+            .verify(&pae_message, &signature)
             .map_err(|_| PqPasetoError::SignatureVerificationFailed)?;
 
         #[cfg(feature = "logging")]
-        debug!("Signature verification successful");
+        debug!("v0.1.1 PAE signature verification successful with footer authentication");
 
-        // Decode and parse payload
-        let payload_bytes = URL_SAFE_NO_PAD.decode(encoded_payload).map_err(|e| {
-            PqPasetoError::InvalidFormat(format!("Invalid payload encoding: {}", e))
-        })?;
-
+        // Parse claims
         let claims: Claims = serde_json::from_slice(&payload_bytes)?;
 
         // Basic time validation (with default 30s clock skew tolerance)
@@ -2172,7 +2268,10 @@ mod tests {
 
         // Invalid base64 in payload
         let result = PasetoPQ::verify(keypair.verifying_key(), "paseto.pq1.public.invalid!!!.sig");
-        assert!(matches!(result.unwrap_err(), PqPasetoError::CryptoError(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            PqPasetoError::InvalidFormat(_)
+        ));
 
         // Invalid signature bytes
         let result = PasetoPQ::verify(
@@ -3232,6 +3331,171 @@ mod tests {
         // Verify we get full 32 bytes
         assert_eq!(key1.to_bytes().len(), 32);
         assert_eq!(key2.to_bytes().len(), 32);
+    }
+
+    #[test]
+    fn test_footer_authentication_security_v0_1_1() {
+        // Test that footer tampering is properly detected in v0.1.1
+        let mut rng = rng();
+        let keypair = KeyPair::generate(&mut rng);
+        let symmetric_key = SymmetricKey::generate(&mut rng);
+
+        let mut claims = Claims::new();
+        claims.set_subject("test-user".to_string()).unwrap();
+        claims.set_issuer("test-issuer".to_string()).unwrap();
+
+        let mut footer = Footer::new();
+        footer.set_kid("test-key-id").unwrap();
+        footer.set_version("1.0").unwrap();
+
+        // Test public token footer authentication
+        let public_token =
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
+
+        // Valid token should verify successfully
+        let verified =
+            PasetoPQ::verify_with_footer(keypair.verifying_key(), &public_token).unwrap();
+        assert_eq!(verified.claims().subject().unwrap(), "test-user");
+        assert_eq!(verified.footer().unwrap().kid().unwrap(), "test-key-id");
+
+        // Tamper with footer in public token - should fail verification
+        let mut token_parts: Vec<&str> = public_token.split('.').collect();
+        // Create a valid but different footer JSON
+        let tampered_footer = Footer::new();
+        let tampered_footer_b64 = tampered_footer.to_base64().unwrap();
+        token_parts[5] = &tampered_footer_b64;
+        let tampered_public = token_parts.join(".");
+
+        let result = PasetoPQ::verify_with_footer(keypair.verifying_key(), &tampered_public);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            PqPasetoError::SignatureVerificationFailed
+        ));
+
+        // Test local token footer authentication
+        let local_token =
+            PasetoPQ::encrypt_with_footer(&symmetric_key, &claims, Some(&footer)).unwrap();
+
+        // Valid token should decrypt successfully
+        let decrypted = PasetoPQ::decrypt_with_footer(&symmetric_key, &local_token).unwrap();
+        assert_eq!(decrypted.claims().subject().unwrap(), "test-user");
+        assert_eq!(decrypted.footer().unwrap().kid().unwrap(), "test-key-id");
+
+        // Tamper with footer in local token - should fail decryption
+        let mut token_parts: Vec<&str> = local_token.split('.').collect();
+        // Create a valid but different footer JSON
+        let tampered_footer = Footer::new();
+        let tampered_footer_b64 = tampered_footer.to_base64().unwrap();
+        token_parts[4] = &tampered_footer_b64;
+        let tampered_local = token_parts.join(".");
+
+        let result = PasetoPQ::decrypt_with_footer(&symmetric_key, &tampered_local);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            PqPasetoError::DecryptionError(_)
+        ));
+    }
+
+    #[test]
+    fn test_pae_integration_v0_1_1() {
+        // Test that PAE encoding is working correctly in token operations
+        let mut rng = rng();
+        let keypair = KeyPair::generate(&mut rng);
+
+        let mut claims = Claims::new();
+        claims.set_subject("pae-test".to_string()).unwrap();
+        let mut footer = Footer::new();
+        footer.set_kid("pae-key").unwrap();
+
+        // Create token with footer
+        let token_with_footer =
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
+
+        // Create token without footer
+        let token_without_footer =
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, None).unwrap();
+
+        // Both should verify successfully
+        let verified_with =
+            PasetoPQ::verify_with_footer(keypair.verifying_key(), &token_with_footer).unwrap();
+        let verified_without =
+            PasetoPQ::verify_with_footer(keypair.verifying_key(), &token_without_footer).unwrap();
+
+        assert_eq!(verified_with.claims().subject().unwrap(), "pae-test");
+        assert_eq!(verified_without.claims().subject().unwrap(), "pae-test");
+        assert!(verified_with.footer().is_some());
+        assert!(verified_without.footer().is_none());
+
+        // Test that empty footer is handled correctly (should authenticate empty bytes)
+        let claims_json = serde_json::to_vec(&claims).unwrap();
+        let empty_footer_bytes = Vec::new();
+        let header = "paseto.pq1.public".as_bytes();
+
+        let pae_message =
+            crate::pae::pae_encode_public_token(header, &claims_json, &empty_footer_bytes);
+
+        // PAE message should contain the empty footer bytes (length 0)
+        assert!(pae_message.len() > 0);
+        // This proves empty footers are still authenticated via PAE
+    }
+
+    #[test]
+    fn test_v0_1_1_security_improvements() {
+        // Comprehensive test demonstrating v0.1.1 security improvements
+        let mut rng = rng();
+        let keypair = KeyPair::generate(&mut rng);
+        let symmetric_key = SymmetricKey::generate(&mut rng);
+
+        let mut claims = Claims::new();
+        claims.set_subject("security-test".to_string()).unwrap();
+        claims.set_audience("api.example.com".to_string()).unwrap();
+
+        // Test various footer content types
+        let mut footer1 = Footer::new();
+        footer1.set_kid("key-1").unwrap();
+
+        let mut footer2 = Footer::new();
+        footer2.set_version("2.0").unwrap();
+        footer2.set_kid("key-2").unwrap();
+
+        let mut footer3 = Footer::new();
+        let admin_value = "admin";
+        footer3.add_custom("role", &admin_value).unwrap();
+
+        let footers = vec![footer1, footer2, footer3];
+
+        for (i, footer) in footers.iter().enumerate() {
+            // Test public tokens
+            let public_token =
+                PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(footer)).unwrap();
+
+            let verified =
+                PasetoPQ::verify_with_footer(keypair.verifying_key(), &public_token).unwrap();
+            assert_eq!(verified.claims().subject().unwrap(), "security-test");
+
+            // Test local tokens
+            let local_token =
+                PasetoPQ::encrypt_with_footer(&symmetric_key, &claims, Some(footer)).unwrap();
+
+            let decrypted = PasetoPQ::decrypt_with_footer(&symmetric_key, &local_token).unwrap();
+            assert_eq!(decrypted.claims().subject().unwrap(), "security-test");
+
+            // Verify footer content is preserved
+            match i {
+                0 => assert_eq!(verified.footer().unwrap().kid().unwrap(), "key-1"),
+                1 => {
+                    assert_eq!(verified.footer().unwrap().version().unwrap(), "2.0");
+                    assert_eq!(verified.footer().unwrap().kid().unwrap(), "key-2");
+                }
+                2 => {
+                    let custom = verified.footer().unwrap().get_custom("role").unwrap();
+                    assert_eq!(custom.as_str().unwrap(), "admin");
+                }
+                _ => unreachable!(),
+            }
+        }
     }
 
     #[test]

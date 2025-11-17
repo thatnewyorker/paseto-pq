@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create test claims
     let mut claims = Claims::new();
-    claims.set_subject("alice@example.com")?;
+    claims.set_subject("elise@example.com")?;
     claims.set_issuer("conflux-auth")?;
     claims.set_audience("conflux-network")?;
     claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
