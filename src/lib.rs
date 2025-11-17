@@ -3464,7 +3464,7 @@ mod tests {
         let admin_value = "admin";
         footer3.add_custom("role", &admin_value).unwrap();
 
-        let footers = vec![footer1, footer2, footer3];
+        let footers = [footer1, footer2, footer3];
 
         for (i, footer) in footers.iter().enumerate() {
             // Test public tokens

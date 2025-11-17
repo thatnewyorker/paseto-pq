@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **LINTING**: Fixed clippy warnings for better code quality
   - Replaced `len() > 0` with `!is_empty()` for clearer intent
+  - Replaced `vec![a, b, c]` with `[a, b, c]` for fixed-size arrays
   - All clippy checks now pass with `-D warnings` across all feature combinations
 - **CONSISTENCY**: Updated all example names from "alice" to "elise" following naming conventions
 
