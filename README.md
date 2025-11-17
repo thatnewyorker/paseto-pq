@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create footer with metadata
     let mut footer = Footer::new();
-    footer.set_kid("signing-key-2024-01")?;  // Key identifier for rotation
+    footer.set_kid("signing-key-2025-01")?;  // Key identifier for rotation
     footer.set_version("v2.1.0")?;           // Service version
     footer.add_custom("trace_id", "trace-abc-123")?;     // Distributed tracing
     footer.add_custom("deployment", "us-east-1")?;       // Infrastructure info
@@ -336,7 +336,7 @@ use paseto_pq::{Footer, PasetoPQ};
 
 // Create and populate footer
 let mut footer = Footer::new();
-footer.set_kid("key-2024-01")?;
+footer.set_kid("key-2025-01")?;
 footer.set_version("v1.0.0")?;
 footer.add_custom("trace_id", "abc-123")?;
 footer.add_custom("environment", "production")?;

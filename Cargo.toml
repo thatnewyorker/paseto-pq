@@ -1,8 +1,8 @@
 [package]
 name = "paseto-pq"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.85.0"
+edition = "2021"
+rust-version = "1.75.0"
 authors = ["Gerard Junior Cruzado <thatnewyorker@gmail.com>"]
 license = "MIT OR Apache-2.0"
 description = "Post-quantum PASETO tokens using ML-DSA (CRYSTALS-Dilithium) signatures"
@@ -66,6 +66,7 @@ maximum-security = ["ml-dsa-87"]   # Maximum security
 [package.metadata.docs.rs]
 features = ["ml-dsa-44", "logging"]
 rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [[bench]]
 name = "pq_paseto_benchmarks"
