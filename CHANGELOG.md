@@ -5,6 +5,17 @@ All notable changes to the `paseto-pq` crate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ✨ Added
+
+- **NEW**: `KeyPair::keypair_from_signing_key_bytes()` to reconstruct a full `KeyPair` from signing key bytes
+  - Derives the verifying key from the signing key using `ml_dsa::SigningKey::verifying_key()`
+  - Useful for loading persistent keys from storage where only the signing key was saved
+  - Note: Uses expanded key format (same as `signing_key_to_bytes()`)
+
+---
+
 ## [0.1.2] - 2025-01-03
 
 ### 🔧 Fixed

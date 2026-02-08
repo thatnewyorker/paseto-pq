@@ -45,7 +45,7 @@
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Generate a new key pair
-//! let mut rng = rand::thread_rng();
+//! let mut rng = rand::rng();
 //! let keypair = KeyPair::generate(&mut rng);
 //!
 //! // Create claims
@@ -514,29 +514,62 @@ impl KeyPair {
         &self.verifying_key
     }
 
-    /// Export the signing key as bytes
+    /// Export the signing key as bytes (expanded form).
+    ///
+    /// Note: This uses the expanded key format. For new applications,
+    /// consider storing the seed instead via `KeyPair::seed()`.
+    #[allow(deprecated)]
     pub fn signing_key_to_bytes(&self) -> Vec<u8> {
-        let encoded = self.signing_key.0.encode();
-        encoded.to_vec()
+        let expanded = self.signing_key.0.to_expanded();
+        expanded.to_vec()
     }
 
-    /// Import signing key from bytes
+    /// Import signing key from bytes (expanded form).
+    ///
+    /// Note: This uses the expanded key format. For new applications,
+    /// consider using seed-based key generation instead.
+    #[allow(deprecated)]
     pub fn signing_key_from_bytes(bytes: &[u8]) -> Result<SigningKey, PqPasetoError> {
-        let encoded = ml_dsa::EncodedSigningKey::<MlDsaParam>::try_from(bytes)
+        use ml_dsa::ExpandedSigningKey;
+        let expanded = ExpandedSigningKey::<MlDsaParam>::try_from(bytes)
             .map_err(|e| PqPasetoError::CryptoError(format!("Invalid key bytes: {:?}", e)))?;
-        let key = ml_dsa::SigningKey::<MlDsaParam>::decode(&encoded);
+        let key = ml_dsa::SigningKey::<MlDsaParam>::from_expanded(&expanded);
         Ok(SigningKey(key))
     }
 
-    /// Export the verifying key as bytes
+    /// Reconstruct a full KeyPair from signing key bytes (expanded form).
+    ///
+    /// This derives the verifying key from the signing key, which is useful
+    /// when loading a keypair from storage where only the signing key was saved.
+    ///
+    /// Note: This uses the expanded key format. For new applications,
+    /// consider using seed-based key generation instead.
+    #[allow(deprecated)]
+    pub fn keypair_from_signing_key_bytes(bytes: &[u8]) -> Result<Self, PqPasetoError> {
+        use ml_dsa::ExpandedSigningKey;
+        use ml_dsa::signature::Keypair as _;
+
+        let expanded = ExpandedSigningKey::<MlDsaParam>::try_from(bytes)
+            .map_err(|e| PqPasetoError::CryptoError(format!("Invalid key bytes: {:?}", e)))?;
+        let signing_key = ml_dsa::SigningKey::<MlDsaParam>::from_expanded(&expanded);
+        let verifying_key = signing_key.verifying_key();
+
+        Ok(Self {
+            signing_key: SigningKey(signing_key),
+            verifying_key: VerifyingKey(verifying_key),
+        })
+    }
+
+    /// Export the verifying key as bytes.
     pub fn verifying_key_to_bytes(&self) -> Vec<u8> {
         let encoded = self.verifying_key.0.encode();
         encoded.to_vec()
     }
 
-    /// Import verifying key from bytes
+    /// Import verifying key from bytes.
     pub fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey, PqPasetoError> {
-        let encoded = ml_dsa::EncodedVerifyingKey::<MlDsaParam>::try_from(bytes)
+        use ml_dsa::EncodedVerifyingKey;
+        let encoded = EncodedVerifyingKey::<MlDsaParam>::try_from(bytes)
             .map_err(|e| PqPasetoError::CryptoError(format!("Invalid key bytes: {:?}", e)))?;
         let key = ml_dsa::VerifyingKey::<MlDsaParam>::decode(&encoded);
         Ok(VerifyingKey(key))
@@ -2078,6 +2111,15 @@ mod tests {
                 let imported_signing = KeyPair::signing_key_from_bytes(&signing_bytes).unwrap();
                 let imported_verifying =
                     KeyPair::verifying_key_from_bytes(&verifying_bytes).unwrap();
+
+                // Test keypair_from_signing_key_bytes round-trip
+                let reconstructed_keypair =
+                    KeyPair::keypair_from_signing_key_bytes(&signing_bytes).unwrap();
+                let reconstructed_verifying_bytes = reconstructed_keypair.verifying_key_to_bytes();
+                assert_eq!(
+                    verifying_bytes, reconstructed_verifying_bytes,
+                    "Reconstructed keypair should have same verifying key"
+                );
 
                 // Keys should be functionally equivalent (test by signing/verifying)
                 let mut claims = Claims::new();
