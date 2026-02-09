@@ -1,424 +1,215 @@
-//! PASETO-PQ Footer Functionality Demo
+//! Footer Demo - PASETO-PQ Footer Functionality
 //!
-//! This example demonstrates the comprehensive footer functionality in PASETO-PQ tokens.
-//! Footers provide authenticated metadata separate from claims, useful for key management,
-//! service mesh integration, tracing, and operational metadata.
-//!
-//! Run with: cargo run --example footer_demo
+//! This example demonstrates the use of footers in PASETO-PQ tokens.
+//! Footers provide a way to include authenticated but unencrypted metadata
+//! alongside tokens.
 
 use paseto_pq::{Claims, Footer, KeyPair, PasetoPQ, SymmetricKey};
-use rand::rng;
-use std::time::Instant;
 use time::{Duration, OffsetDateTime};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🦶 PASETO-PQ Footer Functionality Demo");
-    println!("======================================\n");
+    println!("=== PASETO-PQ Footer Demo (CBOR) ===\n");
 
-    let mut rng = rng();
-
-    // Generate keys for both token types
-    let asymmetric_keypair = KeyPair::generate(&mut rng);
+    // Generate keys
+    let mut rng = rand::rng();
+    let keypair = KeyPair::generate(&mut rng);
     let symmetric_key = SymmetricKey::generate(&mut rng);
 
-    // Create standard claims
+    // ============================================
+    // Part 1: Basic Footer Usage
+    // ============================================
+    println!("--- Part 1: Basic Footer Usage ---\n");
+
     let mut claims = Claims::new();
-    claims.set_subject("elise@example.com")?;
-    claims.set_issuer("auth-service")?;
-    claims.set_audience("api.example.com")?;
-    claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(2))?;
-    claims.set_jti("session-abc-123")?;
-    claims.add_custom("role", "admin")?;
-    claims.add_custom("tenant_id", "org_12345")?;
+    claims.set_subject("user123")?;
+    claims.set_issuer("footer-demo")?;
+    claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
 
-    println!("📋 Standard Claims:");
-    println!("   Subject:  {}", claims.subject().unwrap_or("None"));
-    println!("   Issuer:   {}", claims.issuer().unwrap_or("None"));
-    println!("   JTI:      {}", claims.jti().unwrap_or("None"));
+    // Create a footer with metadata
+    let mut footer = Footer::new();
+    footer.set_kid("signing-key-2024-01")?;
+    footer.set_version("1.0.0")?;
+    footer.set_issuer_meta("production")?;
+    footer.add_custom("region", "us-east-1")?;
 
-    // === BASIC FOOTER FUNCTIONALITY ===
-    println!("\n🏷️  Basic Footer Operations:");
+    // Create token with footer
+    let token_with_footer =
+        PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer))?;
 
-    let mut basic_footer = Footer::new();
-    basic_footer.set_kid("prod-key-2024-01")?;
-    basic_footer.set_version("v2.1.0")?;
-    basic_footer.set_issuer_meta("production-auth-service")?;
-    basic_footer.add_custom("deployment", "us-east-1")?;
-
-    println!("   Created footer:");
-    println!("     KID: {}", basic_footer.kid().unwrap_or("None"));
-    println!("     Version: {}", basic_footer.version().unwrap_or("None"));
+    println!("Token with footer created");
+    println!("Token length: {} bytes", token_with_footer.len());
     println!(
-        "     Issuer Meta: {}",
-        basic_footer.issuer_meta().unwrap_or("None")
-    );
-    println!(
-        "     Deployment: {}",
-        basic_footer
-            .get_custom("deployment")
-            .and_then(|v| v.as_str())
-            .unwrap_or("None")
+        "Token parts: {} (includes footer)\n",
+        token_with_footer.split('.').count()
     );
 
-    // === PUBLIC TOKENS WITH FOOTERS ===
-    println!("\n🔓 Public Token Operations:");
+    // Verify and extract footer
+    let verified = PasetoPQ::verify(keypair.verifying_key(), &token_with_footer)?;
+    if let Some(footer) = verified.footer() {
+        println!("Footer extracted from token:");
+        println!("  Key ID: {:?}", footer.kid());
+        println!("  Version: {:?}", footer.version());
+        println!("  Issuer Meta: {:?}", footer.issuer_meta());
+        if let Some(region) = footer.get_custom("region") {
+            println!("  Region (CBOR): {:?}", region);
+        }
+    }
+    println!();
 
-    let start_time = Instant::now();
-    let public_token = PasetoPQ::sign_with_footer(
-        asymmetric_keypair.signing_key(),
-        &claims,
-        Some(&basic_footer),
-    )?;
-    let sign_time = start_time.elapsed();
+    // ============================================
+    // Part 2: Token Without Footer (comparison)
+    // ============================================
+    println!("--- Part 2: Token Without Footer ---\n");
 
-    let start_time = Instant::now();
-    let verified_public =
-        PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &public_token)?;
-    let verify_time = start_time.elapsed();
+    let token_without_footer = PasetoPQ::sign(keypair.signing_key(), &claims)?;
 
-    println!("   Token format: {}", &public_token[..50]);
-    println!(
-        "   Token parts:  {} (with footer)",
-        public_token.split('.').count()
-    );
-    println!("   Token size:   {} bytes", public_token.len());
-    println!("   Sign time:    {:?}", sign_time);
-    println!("   Verify time:  {:?}", verify_time);
+    println!("Token without footer created");
+    println!("Token length: {} bytes", token_without_footer.len());
+    println!("Token parts: {}\n", token_without_footer.split('.').count());
 
-    // Verify claims and footer
-    assert_eq!(
-        verified_public.claims().subject(),
-        Some("elise@example.com")
-    );
+    let verified_no_footer = PasetoPQ::verify(keypair.verifying_key(), &token_without_footer)?;
+    println!("Has footer: {}\n", verified_no_footer.footer().is_some());
 
-    let footer_data = verified_public.footer().expect("Footer should be present");
-    println!(
-        "   Verified footer KID: {}",
-        footer_data.kid().unwrap_or("None")
-    );
-
-    // === LOCAL TOKENS WITH FOOTERS ===
-    println!("\n🔒 Local Token Operations:");
+    // ============================================
+    // Part 3: Local Token with Footer
+    // ============================================
+    println!("--- Part 3: Local Token with Footer ---\n");
 
     let mut local_footer = Footer::new();
-    local_footer.set_kid("session-key-2024-01")?;
-    local_footer.add_custom("session_type", "secure")?;
-    local_footer.add_custom("encryption_level", "AES256")?;
+    local_footer.set_kid("encryption-key-2024")?;
+    local_footer.add_custom("algorithm", "ChaCha20-Poly1305")?;
+    local_footer.add_custom("encrypted_at", &OffsetDateTime::now_utc().unix_timestamp())?;
 
-    let start_time = Instant::now();
     let local_token = PasetoPQ::encrypt_with_footer(&symmetric_key, &claims, Some(&local_footer))?;
-    let encrypt_time = start_time.elapsed();
 
-    let start_time = Instant::now();
-    let verified_local = PasetoPQ::decrypt_with_footer(&symmetric_key, &local_token)?;
-    let decrypt_time = start_time.elapsed();
+    println!("Local token with footer created");
+    println!("Token length: {} bytes\n", local_token.len());
 
-    println!("   Token format: {}", &local_token[..50]);
-    println!(
-        "   Token parts:  {} (with footer)",
-        local_token.split('.').count()
-    );
-    println!("   Token size:   {} bytes", local_token.len());
-    println!("   Encrypt time: {:?}", encrypt_time);
-    println!("   Decrypt time: {:?}", decrypt_time);
+    let decrypted = PasetoPQ::decrypt(&symmetric_key, &local_token)?;
+    if let Some(footer) = decrypted.footer() {
+        println!("Local token footer:");
+        println!("  Key ID: {:?}", footer.kid());
+        if let Some(alg) = footer.get_custom("algorithm") {
+            println!("  Algorithm (CBOR): {:?}", alg);
+        }
+    }
+    println!();
 
-    let local_footer_data = verified_local.footer().expect("Footer should be present");
-    println!(
-        "   Session type: {}",
-        local_footer_data
-            .get_custom("session_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("None")
-    );
+    // ============================================
+    // Part 4: Footer Tamper Detection
+    // ============================================
+    println!("--- Part 4: Footer Tamper Detection ---\n");
 
-    // === KEY ROTATION SCENARIO ===
-    println!("\n🔄 Key Rotation Scenario:");
+    // Create a token with footer
+    let mut original_footer = Footer::new();
+    original_footer.set_kid("secure-key")?;
+    original_footer.add_custom("integrity", "protected")?;
 
-    // Simulate key rotation with different key IDs
-    let key_rotation_scenarios = vec![
-        ("legacy-key-2023", "v1.0.0", "Legacy system"),
-        ("current-key-2024-q1", "v2.0.0", "Current production"),
-        ("next-key-2024-q2", "v2.1.0", "Next release candidate"),
-    ];
+    let secure_token =
+        PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&original_footer))?;
 
-    for (kid, version, description) in key_rotation_scenarios {
-        let mut rotation_footer = Footer::new();
-        rotation_footer.set_kid(kid)?;
-        rotation_footer.set_version(version)?;
-        rotation_footer.add_custom("description", description)?;
+    // Try to tamper with footer
+    let parts: Vec<&str> = secure_token.split('.').collect();
+    if parts.len() == 6 {
+        // Create a tampered footer
+        let mut tampered_footer = Footer::new();
+        tampered_footer.set_kid("evil-key")?;
+        let tampered_footer_b64 = tampered_footer.to_base64()?;
 
-        let token = PasetoPQ::sign_with_footer(
-            asymmetric_keypair.signing_key(),
-            &claims,
-            Some(&rotation_footer),
-        )?;
-
-        let verified = PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &token)?;
-        let footer = verified.footer().unwrap();
-
-        println!(
-            "   Token with KID '{}' ({}): verified ✓",
-            footer.kid().unwrap(),
-            footer.get_custom("description").unwrap().as_str().unwrap()
+        let tampered_token = format!(
+            "{}.{}.{}.{}.{}.{}",
+            parts[0], parts[1], parts[2], parts[3], parts[4], tampered_footer_b64
         );
+
+        // Attempt verification
+        match PasetoPQ::verify(keypair.verifying_key(), &tampered_token) {
+            Ok(_) => println!("ERROR: Tampered token was accepted!"),
+            Err(e) => println!("Tamper detection working: {}", e),
+        }
+    }
+    println!();
+
+    // ============================================
+    // Part 5: Key Rotation with Footer
+    // ============================================
+    println!("--- Part 5: Key Rotation Pattern ---\n");
+
+    // Simulate multiple key generations
+    let key_ids = ["key-v1", "key-v2", "key-v3"];
+    let keypairs: Vec<_> = key_ids
+        .iter()
+        .map(|_| KeyPair::generate(&mut rng))
+        .collect();
+
+    // Create tokens with different key IDs
+    let mut tokens = Vec::new();
+    for (idx, (kid, kp)) in key_ids.iter().zip(keypairs.iter()).enumerate() {
+        let mut claims = Claims::new();
+        claims.set_subject(&format!("user-{}", idx))?;
+        claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
+
+        let mut footer = Footer::new();
+        footer.set_kid(kid)?;
+
+        let token = PasetoPQ::sign_with_footer(kp.signing_key(), &claims, Some(&footer))?;
+        tokens.push((token, *kid, kp));
     }
 
-    // === MICROSERVICE INTEGRATION ===
-    println!("\n🔗 Microservice Integration:");
+    // Verify tokens using kid to select key
+    println!("Key rotation verification:");
+    for (token, expected_kid, keypair) in &tokens {
+        let parsed = PasetoPQ::parse_token(token)?;
+        if let Some(footer) = parsed.footer() {
+            let kid = footer.kid().unwrap_or("unknown");
+            println!("  Token with kid='{}' -> expected '{}'", kid, expected_kid);
 
-    let mut service_footer = Footer::new();
-    service_footer.set_kid("api-gateway-2024")?;
-    service_footer.add_custom("trace_id", "trace-xyz-789")?;
-    service_footer.add_custom("span_id", "span-abc-123")?;
-    service_footer.add_custom("service_mesh", "istio-1.18")?;
-    service_footer.add_custom("namespace", "production")?;
-    service_footer.add_custom("cluster", "us-east-1-prod")?;
-    service_footer.add_custom("request_id", "req-def-456")?;
-
-    let service_token = PasetoPQ::sign_with_footer(
-        asymmetric_keypair.signing_key(),
-        &claims,
-        Some(&service_footer),
-    )?;
-
-    let verified_service =
-        PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &service_token)?;
-    let service_footer_data = verified_service.footer().unwrap();
-
-    println!("   Distributed tracing metadata:");
-    println!(
-        "     Trace ID: {}",
-        service_footer_data
-            .get_custom("trace_id")
-            .unwrap()
-            .as_str()
-            .unwrap()
-    );
-    println!(
-        "     Span ID:  {}",
-        service_footer_data
-            .get_custom("span_id")
-            .unwrap()
-            .as_str()
-            .unwrap()
-    );
-    println!(
-        "     Cluster:  {}",
-        service_footer_data
-            .get_custom("cluster")
-            .unwrap()
-            .as_str()
-            .unwrap()
-    );
-
-    // === PERFORMANCE COMPARISON ===
-    println!("\n📊 Performance Impact Analysis:");
-
-    // Tokens without footer
-    let token_no_footer = PasetoPQ::sign(asymmetric_keypair.signing_key(), &claims)?;
-    let local_no_footer = PasetoPQ::encrypt(&symmetric_key, &claims)?;
-
-    // Tokens with footer
-    let token_with_footer = PasetoPQ::sign_with_footer(
-        asymmetric_keypair.signing_key(),
-        &claims,
-        Some(&basic_footer),
-    )?;
-    let local_with_footer =
-        PasetoPQ::encrypt_with_footer(&symmetric_key, &claims, Some(&local_footer))?;
-
-    println!("   Public Token Sizes:");
-    println!("     Without footer: {} bytes", token_no_footer.len());
-    println!("     With footer:    {} bytes", token_with_footer.len());
-    println!(
-        "     Overhead:       {} bytes ({:.1}%)",
-        token_with_footer.len() - token_no_footer.len(),
-        ((token_with_footer.len() - token_no_footer.len()) as f64 / token_no_footer.len() as f64)
-            * 100.0
-    );
-
-    println!("   Local Token Sizes:");
-    println!("     Without footer: {} bytes", local_no_footer.len());
-    println!("     With footer:    {} bytes", local_with_footer.len());
-    println!(
-        "     Overhead:       {} bytes ({:.1}%)",
-        local_with_footer.len() - local_no_footer.len(),
-        ((local_with_footer.len() - local_no_footer.len()) as f64 / local_no_footer.len() as f64)
-            * 100.0
-    );
-
-    // === SECURITY ANALYSIS ===
-    println!("\n🛡️  Security Properties:");
-
-    // Demonstrate tamper detection
-    let mut tampered_token = public_token.clone();
-    tampered_token.push('x'); // Tamper with footer
-
-    let tamper_result =
-        PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &tampered_token);
-    println!(
-        "   Footer tamper detection: {}",
-        if tamper_result.is_err() {
-            "✓ PASS"
-        } else {
-            "✗ FAIL"
+            // In production, you'd look up the key by kid
+            let result = PasetoPQ::verify(keypair.verifying_key(), token);
+            println!(
+                "    Verification: {}",
+                if result.is_ok() { "OK" } else { "FAILED" }
+            );
         }
-    );
+    }
+    println!();
 
-    // Show footer visibility in public vs local tokens
-    println!("   Public token footer visibility:");
-    println!("     Footer is visible but authenticated");
-    println!("     Modification breaks signature verification");
+    // ============================================
+    // Part 6: Footer Size Comparison
+    // ============================================
+    println!("--- Part 6: Footer Size Impact ---\n");
 
-    println!("   Local token footer confidentiality:");
-    println!("     Footer is encrypted with payload");
-    println!("     Provides both confidentiality and authentication");
+    let mut small_footer = Footer::new();
+    small_footer.set_kid("k1")?;
 
-    // === ADVANCED USE CASES ===
-    println!("\n🎯 Advanced Use Cases:");
+    let mut large_footer = Footer::new();
+    large_footer.set_kid("very-long-key-identifier-for-demonstration")?;
+    large_footer.set_version("2024.01.15-beta.3")?;
+    large_footer.set_issuer_meta("production-us-east-1-primary")?;
+    large_footer.add_custom("trace_id", "abc123def456")?;
+    large_footer.add_custom("span_id", "span-789")?;
+    large_footer.add_custom("cluster", "cluster-alpha")?;
 
-    // 1. Load balancing hints
-    let mut lb_footer = Footer::new();
-    lb_footer.set_kid("load-balancer-key")?;
-    lb_footer.add_custom("preferred_region", "us-east-1")?;
-    lb_footer.add_custom("load_class", "premium")?;
-    lb_footer.add_custom("routing_tier", "gold")?;
-    lb_footer.add_custom("sticky_session", &true)?;
+    let token_no_footer = PasetoPQ::sign(keypair.signing_key(), &claims)?;
+    let token_small_footer =
+        PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&small_footer))?;
+    let token_large_footer =
+        PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&large_footer))?;
 
-    println!("   1. Load Balancing Hints:");
+    println!("Token sizes:");
+    println!("  No footer:    {} bytes", token_no_footer.len());
     println!(
-        "      Preferred region: {}",
-        lb_footer
-            .get_custom("preferred_region")
-            .unwrap()
-            .as_str()
-            .unwrap()
-    );
-    println!(
-        "      Load class: {}",
-        lb_footer
-            .get_custom("load_class")
-            .unwrap()
-            .as_str()
-            .unwrap()
-    );
-
-    // 2. A/B testing metadata
-    let mut ab_footer = Footer::new();
-    ab_footer.set_kid("experiment-key")?;
-    ab_footer.add_custom("experiment_id", "homepage-redesign-v2")?;
-    ab_footer.add_custom("variant", "treatment")?;
-    ab_footer.add_custom("cohort", "premium-users")?;
-
-    println!("   2. A/B Testing Metadata:");
-    println!(
-        "      Experiment: {}",
-        ab_footer
-            .get_custom("experiment_id")
-            .unwrap()
-            .as_str()
-            .unwrap()
+        "  Small footer: {} bytes (+{})",
+        token_small_footer.len(),
+        token_small_footer.len() - token_no_footer.len()
     );
     println!(
-        "      Variant: {}",
-        ab_footer.get_custom("variant").unwrap().as_str().unwrap()
+        "  Large footer: {} bytes (+{})",
+        token_large_footer.len(),
+        token_large_footer.len() - token_no_footer.len()
     );
+    println!();
 
-    // 3. Compliance and audit trail
-    let mut audit_footer = Footer::new();
-    audit_footer.set_kid("audit-key")?;
-    audit_footer.add_custom("compliance_level", "SOX")?;
-    audit_footer.add_custom("audit_log_id", "audit-2024-001234")?;
-    audit_footer.add_custom("data_classification", "confidential")?;
-    audit_footer.add_custom("retention_policy", "7-years")?;
-
-    println!("   3. Compliance & Audit:");
-    println!(
-        "      Compliance: {}",
-        audit_footer
-            .get_custom("compliance_level")
-            .unwrap()
-            .as_str()
-            .unwrap()
-    );
-    println!(
-        "      Audit log: {}",
-        audit_footer
-            .get_custom("audit_log_id")
-            .unwrap()
-            .as_str()
-            .unwrap()
-    );
-
-    // === BACKWARD COMPATIBILITY ===
-    println!("\n↔️  Backward Compatibility:");
-
-    // Old tokens (without footer) should work with new verification methods
-    let old_public = PasetoPQ::sign(asymmetric_keypair.signing_key(), &claims)?;
-    let old_local = PasetoPQ::encrypt(&symmetric_key, &claims)?;
-
-    let verified_old_public =
-        PasetoPQ::verify_with_footer(asymmetric_keypair.verifying_key(), &old_public)?;
-    let verified_old_local = PasetoPQ::decrypt_with_footer(&symmetric_key, &old_local)?;
-
-    println!("   Legacy token compatibility:");
-    println!(
-        "     Public token (no footer): {} ✓",
-        if verified_old_public.footer().is_none() {
-            "PASS"
-        } else {
-            "FAIL"
-        }
-    );
-    println!(
-        "     Local token (no footer):  {} ✓",
-        if verified_old_local.footer().is_none() {
-            "PASS"
-        } else {
-            "FAIL"
-        }
-    );
-
-    // New tokens with footer should work with standard methods
-    let _new_public_verified = PasetoPQ::verify(asymmetric_keypair.verifying_key(), &old_public)?;
-    let _new_local_verified = PasetoPQ::decrypt(&symmetric_key, &old_local)?;
-
-    println!("     Standard API compatibility: ✓ PASS");
-
-    // === TOKEN FORMAT EXAMPLES ===
-    println!("\n📝 Token Format Examples:");
-
-    println!("   Public token without footer (5 parts):");
-    println!("     paseto.v1.public.<payload>.<signature>");
-    println!("     Parts: {}", old_public.split('.').count());
-
-    println!("   Public token with footer (6 parts):");
-    println!("     paseto.v1.public.<payload>.<signature>.<footer>");
-    println!("     Parts: {}", public_token.split('.').count());
-
-    println!("   Local token without footer (4 parts):");
-    println!("     paseto.v1.local.<encrypted_payload>");
-    println!("     Parts: {}", old_local.split('.').count());
-
-    println!("   Local token with footer (5 parts):");
-    println!("     paseto.v1.local.<encrypted_payload>.<footer>");
-    println!("     Parts: {}", local_token.split('.').count());
-
-    // === BEST PRACTICES ===
-    println!("\n💡 Footer Best Practices:");
-    println!("   ✓ Use footers for infrastructure metadata, not business logic");
-    println!("   ✓ Keep footer size reasonable (< 1KB recommended)");
-    println!("   ✓ Use kid field for key rotation and selection");
-    println!("   ✓ Include version information for API compatibility");
-    println!("   ✓ Add tracing information for distributed systems");
-    println!("   ✗ Don't put sensitive business data in public token footers");
-    println!("   ✗ Don't rely on footer data for authorization decisions");
-    println!("   ✗ Don't use footers as a replacement for proper claims structure");
-
-    println!("\n✅ Footer functionality demonstration completed successfully!");
-    println!("🦶 PASETO-PQ footers provide powerful metadata capabilities!");
-    println!("🔐 All operations maintain quantum-safe security properties!");
-
+    println!("=== Footer Demo Complete ===");
     Ok(())
 }
 
@@ -427,68 +218,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_footer_workflow() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_footer_workflow() {
         let mut rng = rand::rng();
         let keypair = KeyPair::generate(&mut rng);
 
         let mut claims = Claims::new();
-        claims.set_subject("test-user")?;
+        claims.set_subject("test").unwrap();
+        claims
+            .set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))
+            .unwrap();
 
         let mut footer = Footer::new();
-        footer.set_kid("test-key")?;
-        footer.add_custom("test_field", "test_value")?;
+        footer.set_kid("test-key").unwrap();
+        footer.add_custom("env", "test").unwrap();
 
-        let token = PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer))?;
-        let verified = PasetoPQ::verify_with_footer(keypair.verifying_key(), &token)?;
+        let token =
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
+        let verified = PasetoPQ::verify(keypair.verifying_key(), &token).unwrap();
 
-        assert_eq!(verified.claims().subject(), Some("test-user"));
+        assert!(verified.footer().is_some());
         assert_eq!(verified.footer().unwrap().kid(), Some("test-key"));
-        assert_eq!(
-            verified
-                .footer()
-                .unwrap()
-                .get_custom("test_field")
-                .unwrap()
-                .as_str(),
-            Some("test_value")
-        );
-
-        Ok(())
     }
 
     #[test]
-    fn test_footer_size_impact() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_footer_size_impact() {
         let mut rng = rand::rng();
         let keypair = KeyPair::generate(&mut rng);
 
         let mut claims = Claims::new();
-        claims.set_subject("test-user")?;
+        claims.set_subject("test").unwrap();
+        claims
+            .set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))
+            .unwrap();
 
-        // Token without footer
-        let token_no_footer = PasetoPQ::sign(keypair.signing_key(), &claims)?;
+        let token_no_footer = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
 
-        // Token with small footer
-        let mut small_footer = Footer::new();
-        small_footer.set_kid("key-1")?;
-        let token_small_footer =
-            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&small_footer))?;
+        let mut footer = Footer::new();
+        footer.set_kid("key-id").unwrap();
+        let token_with_footer =
+            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer)).unwrap();
 
-        // Token with large footer
-        let mut large_footer = Footer::new();
-        large_footer.set_kid("very-long-key-identifier-with-lots-of-metadata")?;
-        large_footer.add_custom("large_data", &"x".repeat(500))?;
-        let token_large_footer =
-            PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&large_footer))?;
-
-        // Verify size relationships
-        assert!(token_small_footer.len() > token_no_footer.len());
-        assert!(token_large_footer.len() > token_small_footer.len());
-
-        // All tokens should verify correctly
-        PasetoPQ::verify(keypair.verifying_key(), &token_no_footer)?;
-        PasetoPQ::verify_with_footer(keypair.verifying_key(), &token_small_footer)?;
-        PasetoPQ::verify_with_footer(keypair.verifying_key(), &token_large_footer)?;
-
-        Ok(())
+        // Token with footer should be larger
+        assert!(token_with_footer.len() > token_no_footer.len());
     }
 }

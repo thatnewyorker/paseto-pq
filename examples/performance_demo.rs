@@ -1,136 +1,186 @@
-//! Performance demonstration for post-quantum PASETO tokens
+//! Performance Demo - PASETO-PQ Token Performance Characteristics
 //!
-//! This example shows the performance characteristics of ML-DSA-65 based tokens
-//! compared to what you might expect from Ed25519 tokens.
-//!
-//! Run with: cargo run --example performance_demo
+//! This example demonstrates the performance characteristics of PASETO-PQ tokens
+//! including key generation, signing, verification, encryption, and decryption.
 
-use paseto_pq::{Claims, KeyPair, PasetoPQ};
-
+use paseto_pq::{Claims, KeyPair, PasetoPQ, SymmetricKey};
 use std::time::Instant;
 use time::{Duration, OffsetDateTime};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔐 PASETO-PQ Performance Demo");
-    println!("================================================\n");
+    println!("=== PASETO-PQ Performance Demo ===\n");
 
-    // Key generation benchmark
-    println!("🔑 Key Generation:");
     let mut rng = rand::rng();
-    let keygen_start = Instant::now();
+
+    // ============================================
+    // Key Generation Performance
+    // ============================================
+    println!("--- Key Generation ---\n");
+
+    let start = Instant::now();
     let keypair = KeyPair::generate(&mut rng);
-    let keygen_time = keygen_start.elapsed();
-    println!("   ML-DSA KeyGen: {:?}", keygen_time);
-    println!("   Note: Ed25519 typically takes ~50-100µs\n");
+    let keygen_time = start.elapsed();
+    println!("ML-DSA keypair generation: {:?}", keygen_time);
 
-    // Key size information
-    let signing_bytes = keypair.signing_key_to_bytes();
-    let verifying_bytes = keypair.verifying_key_to_bytes();
-    println!("🗂️  Key Sizes:");
-    println!("   Signing key:    {} bytes", signing_bytes.len());
-    println!("   Verifying key:  {} bytes", verifying_bytes.len());
-    println!("   Note: Ed25519 keys are 32 bytes each\n");
+    let start = Instant::now();
+    let symmetric_key = SymmetricKey::generate(&mut rng);
+    let symkey_time = start.elapsed();
+    println!("Symmetric key generation: {:?}", symkey_time);
+    println!();
 
-    // Create test claims
+    // ============================================
+    // Token Creation Performance
+    // ============================================
+    println!("--- Token Creation ---\n");
+
     let mut claims = Claims::new();
     claims.set_subject("user123")?;
-    claims.set_issuer("my-service")?;
+    claims.set_issuer("performance-demo")?;
     claims.set_audience("api.example.com")?;
     claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
-    claims.set_jti("unique-token-123")?;
-    claims.add_custom("tenant_id", "org_abc123")?;
-    claims.add_custom("roles", ["user", "admin"])?;
-    claims.add_custom("permissions", ["read:messages", "write:messages"])?;
+    claims.add_custom("roles", &["user", "admin"])?;
+    claims.add_custom("permissions", &["read:messages", "write:messages"])?;
 
-    // Token signing benchmark
-    println!("✍️  Token Signing:");
-    let sign_start = Instant::now();
-    let token = PasetoPQ::sign(keypair.signing_key(), &claims)?;
-    let sign_time = sign_start.elapsed();
-    println!("   ML-DSA Sign: {:?}", sign_time);
-    println!("   Note: Ed25519 typically takes ~20-50µs\n");
+    // Public token signing
+    let start = Instant::now();
+    let public_token = PasetoPQ::sign(keypair.signing_key(), &claims)?;
+    let sign_time = start.elapsed();
+    println!("Public token signing: {:?}", sign_time);
+    println!("Public token size: {} bytes", public_token.len());
 
-    // Token size information
-    println!("📏 Token Size:");
-    println!("   Token length: {} bytes", token.len());
-    println!("   Note: Ed25519 PASETO tokens are typically ~300-500 bytes\n");
+    // Local token encryption
+    let start = Instant::now();
+    let local_token = PasetoPQ::encrypt(&symmetric_key, &claims)?;
+    let encrypt_time = start.elapsed();
+    println!("Local token encryption: {:?}", encrypt_time);
+    println!("Local token size: {} bytes", local_token.len());
+    println!();
 
-    // Token verification benchmark
-    println!("✅ Token Verification:");
-    let verify_start = Instant::now();
-    let verified = PasetoPQ::verify(keypair.verifying_key(), &token)?;
-    let verify_time = verify_start.elapsed();
-    println!("   ML-DSA Verify: {:?}", verify_time);
-    println!("   Note: Ed25519 typically takes ~40-80µs\n");
+    // ============================================
+    // Token Verification Performance
+    // ============================================
+    println!("--- Token Verification ---\n");
 
-    // Batch operations to show sustained performance
-    println!("🔄 Batch Operations (100 iterations):");
+    // Public token verification
+    let start = Instant::now();
+    let verified = PasetoPQ::verify(keypair.verifying_key(), &public_token)?;
+    let verify_time = start.elapsed();
+    println!("Public token verification: {:?}", verify_time);
+    println!("Verified subject: {:?}", verified.claims().subject());
+
+    // Local token decryption
+    let start = Instant::now();
+    let decrypted = PasetoPQ::decrypt(&symmetric_key, &local_token)?;
+    let decrypt_time = start.elapsed();
+    println!("Local token decryption: {:?}", decrypt_time);
+    println!("Decrypted subject: {:?}", decrypted.claims().subject());
+    println!();
+
+    // ============================================
+    // Batch Operations
+    // ============================================
+    println!("--- Batch Operations (100 tokens) ---\n");
 
     // Batch signing
-    let batch_sign_start = Instant::now();
-    let mut tokens = Vec::new();
+    let start = Instant::now();
+    let mut tokens = Vec::with_capacity(100);
     for i in 0..100 {
         let mut batch_claims = Claims::new();
-        batch_claims.set_subject(format!("user{}", i))?;
-        batch_claims.set_issuer("my-service")?;
-        batch_claims.set_audience("api.example.com")?;
-        batch_claims.set_jti(format!("token-{}", i))?;
-
-        let batch_token = PasetoPQ::sign(keypair.signing_key(), &batch_claims)?;
-        tokens.push(batch_token);
+        batch_claims.set_subject(&format!("user{}", i))?;
+        batch_claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
+        batch_claims.set_jti(&format!("token-{}", i))?;
+        let token = PasetoPQ::sign(keypair.signing_key(), &batch_claims)?;
+        tokens.push(token);
     }
-    let batch_sign_time = batch_sign_start.elapsed();
-    println!(
-        "   100 signs:    {:?} ({:?} per operation)",
-        batch_sign_time,
-        batch_sign_time / 100
-    );
+    let batch_sign_time = start.elapsed();
+    println!("Batch sign (100 tokens): {:?}", batch_sign_time);
+    println!("Average per token: {:?}", batch_sign_time / 100);
 
     // Batch verification
-    let batch_verify_start = Instant::now();
+    let start = Instant::now();
     for token in &tokens {
-        let _verified = PasetoPQ::verify(keypair.verifying_key(), token)?;
+        let _ = PasetoPQ::verify(keypair.verifying_key(), token)?;
     }
-    let batch_verify_time = batch_verify_start.elapsed();
-    println!(
-        "   100 verifies: {:?} ({:?} per operation)",
-        batch_verify_time,
-        batch_verify_time / 100
-    );
+    let batch_verify_time = start.elapsed();
+    println!("Batch verify (100 tokens): {:?}", batch_verify_time);
+    println!("Average per token: {:?}", batch_verify_time / 100);
+    println!();
 
-    // Display the actual token (truncated)
-    println!("\n🎫 Sample PASETO-PQ Token:");
-    if token.len() > 200 {
-        println!("   paseto.v1.public.{}...", &token[13..200]);
-        println!("   (truncated - full length: {} chars)", token.len());
-    } else {
-        println!("   {}", token);
-    }
+    // ============================================
+    // Size Comparison
+    // ============================================
+    println!("--- Token Size Analysis ---\n");
 
-    // Verify the claims
-    println!("\n📋 Verified Claims:");
-    let claims = verified.claims();
-    println!("   Subject:  {:?}", claims.subject());
-    println!("   Issuer:   {:?}", claims.issuer());
-    println!("   Audience: {:?}", claims.audience());
-    println!("   JTI:      {:?}", claims.jti());
+    // Minimal claims
+    let mut minimal_claims = Claims::new();
+    minimal_claims.set_subject("u")?;
+    minimal_claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
+    let minimal_token = PasetoPQ::sign(keypair.signing_key(), &minimal_claims)?;
 
-    if let Some(tenant) = claims.get_custom("tenant_id") {
-        println!("   Tenant:   {:?}", tenant.as_str());
-    }
-    if let Some(roles) = claims.get_custom("roles") {
-        println!("   Roles:    {:?}", roles);
-    }
+    // Medium claims
+    let mut medium_claims = Claims::new();
+    medium_claims.set_subject("user123")?;
+    medium_claims.set_issuer("auth-service")?;
+    medium_claims.set_audience("api.example.com")?;
+    medium_claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
+    medium_claims.add_custom("role", "admin")?;
+    let medium_token = PasetoPQ::sign(keypair.signing_key(), &medium_claims)?;
 
-    println!("🎯 Performance Summary:");
-    println!("   • ML-DSA provides quantum-safe signatures");
-    println!("   • ~10-100x slower than Ed25519 (expected for PQ crypto)");
-    println!(
-        "   • Signature size depends on parameter set (ml-dsa-44: ~2.4KB, ml-dsa-65: ~3.3KB, ml-dsa-87: ~4.6KB)"
-    );
-    println!("   • Still practical for authentication tokens");
-    println!("   • Future-proof against quantum computers");
+    // Large claims
+    let mut large_claims = Claims::new();
+    large_claims.set_subject("user123")?;
+    large_claims.set_issuer("auth-service")?;
+    large_claims.set_audience("api.example.com")?;
+    large_claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
+    large_claims.add_custom("roles", &["admin", "user", "moderator"])?;
+    large_claims.add_custom("permissions", &["read", "write", "delete", "admin"])?;
+    large_claims.add_custom("metadata", &"some metadata value")?;
+    let large_token = PasetoPQ::sign(keypair.signing_key(), &large_claims)?;
 
-    println!("\n✅ Demo completed successfully!");
+    println!("Minimal token: {} bytes", minimal_token.len());
+    println!("Medium token:  {} bytes", medium_token.len());
+    println!("Large token:   {} bytes", large_token.len());
+    println!();
+
+    // ============================================
+    // Summary
+    // ============================================
+    println!("--- Performance Summary ---\n");
+    println!("Key Generation:");
+    println!("  ML-DSA keypair: {:?}", keygen_time);
+    println!("  Symmetric key:  {:?}", symkey_time);
+    println!();
+    println!("Single Operations:");
+    println!("  Sign:    {:?}", sign_time);
+    println!("  Verify:  {:?}", verify_time);
+    println!("  Encrypt: {:?}", encrypt_time);
+    println!("  Decrypt: {:?}", decrypt_time);
+    println!();
+    println!("Note: ML-DSA (post-quantum) signatures are larger and slower than");
+    println!("classical signatures (RSA, ECDSA), but provide quantum resistance.");
+
+    println!("\n=== Performance Demo Complete ===");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_performance_sanity() {
+        let mut rng = rand::rng();
+        let keypair = KeyPair::generate(&mut rng);
+
+        let mut claims = Claims::new();
+        claims.set_subject("test").unwrap();
+        claims
+            .set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))
+            .unwrap();
+
+        let token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
+        let verified = PasetoPQ::verify(keypair.verifying_key(), &token).unwrap();
+
+        assert_eq!(verified.claims().subject(), Some("test"));
+    }
 }

@@ -1,78 +1,72 @@
-//! Simple test to debug signature verification issue in v0.1.1
+//! Simple Security Test - PASETO-PQ Basic Security Verification
+//!
+//! A simple example that demonstrates basic token creation and verification.
 
-use paseto_pq::{Claims, Footer, KeyPair, PasetoPQ};
-use rand::rng;
-use time::OffsetDateTime;
+use paseto_pq::{Claims, KeyPair, PasetoPQ};
+use time::{Duration, OffsetDateTime};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔍 Simple Security Test - Debug Mode");
-    println!("═══════════════════════════════════════");
+    println!("=== PASETO-PQ Simple Security Test ===\n");
 
-    // Generate keys
-    let mut rng = rng();
+    // Generate a new keypair
+    let mut rng = rand::rng();
     let keypair = KeyPair::generate(&mut rng);
 
-    // Create simple claims
+    // Create claims
     let mut claims = Claims::new();
-    claims.set_subject("test@example.com".to_string())?;
-    claims.set_issuer("test-service".to_string())?;
-    claims.set_expiration(OffsetDateTime::now_utc() + time::Duration::hours(1))?;
+    claims.set_subject("test@example.com")?;
+    claims.set_issuer("test-service")?;
+    claims.set_audience("api.example.com")?;
+    claims.set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))?;
 
-    println!("✅ Created claims");
+    println!("Claims created:");
+    println!("  Subject: {:?}", claims.subject());
+    println!("  Issuer: {:?}", claims.issuer());
+    println!("  Audience: {:?}", claims.audience());
+    println!();
 
-    // Create footer with array custom field (testing the issue)
-    let mut footer = Footer::new();
-    footer.set_kid("test-key")?;
-    footer.set_version("1.0")?;
-    footer.add_custom("permissions", &["read", "write", "delete"])?;
+    // Sign the token
+    let token = PasetoPQ::sign(keypair.signing_key(), &claims)?;
+    println!("Token created successfully");
+    println!("Token length: {} bytes", token.len());
+    println!("Token prefix: {}", &token[..20]);
+    println!();
 
-    println!("✅ Created footer");
+    // Verify the token
+    let verified = PasetoPQ::verify(keypair.verifying_key(), &token)?;
+    println!("Token verified successfully");
+    println!("Verified subject: {:?}", verified.claims().subject());
+    println!();
 
-    // Test token creation and verification
-    println!("\n🔐 Testing Token Operations:");
-
-    // Sign token
-    let token = PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, Some(&footer))?;
-    println!("✅ Token signed successfully");
-    println!("   Token length: {} bytes", token.len());
-
-    // Verify token
-    match PasetoPQ::verify_with_footer(keypair.verifying_key(), &token) {
-        Ok(verified) => {
-            println!("✅ Token verified successfully");
-            println!("   Subject: {}", verified.claims().subject().unwrap());
-            println!(
-                "   Footer Key ID: {}",
-                verified.footer().unwrap().kid().unwrap()
-            );
-        }
-        Err(e) => {
-            println!("❌ ERROR: Token verification failed: {:?}", e);
-            return Err(e.into());
-        }
+    // Test with wrong key
+    let other_keypair = KeyPair::generate(&mut rng);
+    match PasetoPQ::verify(other_keypair.verifying_key(), &token) {
+        Ok(_) => println!("ERROR: Token verified with wrong key!"),
+        Err(e) => println!("Correct: Wrong key rejected - {}", e),
     }
 
-    // Test without footer
-    println!("\n🔐 Testing Without Footer:");
-
-    let token_no_footer = PasetoPQ::sign_with_footer(keypair.signing_key(), &claims, None)?;
-    println!("✅ Token without footer signed successfully");
-
-    match PasetoPQ::verify_with_footer(keypair.verifying_key(), &token_no_footer) {
-        Ok(verified) => {
-            println!("✅ Token without footer verified successfully");
-            println!("   Subject: {}", verified.claims().subject().unwrap());
-            println!("   Has footer: {}", verified.footer().is_some());
-        }
-        Err(e) => {
-            println!(
-                "❌ ERROR: Token without footer verification failed: {:?}",
-                e
-            );
-            return Err(e.into());
-        }
-    }
-
-    println!("\n🎉 All tests passed!");
+    println!("\n=== Security Test Complete ===");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_security() {
+        let mut rng = rand::rng();
+        let keypair = KeyPair::generate(&mut rng);
+
+        let mut claims = Claims::new();
+        claims.set_subject("test").unwrap();
+        claims
+            .set_expiration(OffsetDateTime::now_utc() + Duration::hours(1))
+            .unwrap();
+
+        let token = PasetoPQ::sign(keypair.signing_key(), &claims).unwrap();
+        let verified = PasetoPQ::verify(keypair.verifying_key(), &token).unwrap();
+
+        assert_eq!(verified.claims().subject(), Some("test"));
+    }
 }
